@@ -153,7 +153,7 @@
 
   <div class="control-panel">
     <div class="control-nav">
-      <button class="menu-toggle" id="controlMenuToggle" aria-label="Otvori meni" onclick="toggleControlMenu()">?</button>
+      <button class="menu-toggle" id="controlMenuToggle" aria-label="Otvori meni" onclick="toggleControlMenu()">&#9776;</button>
       <div class="control-menu hidden" id="controlMenu">
         <button class="control-menu-item" onclick="goToStartScreen()">Pocetna stranica</button>
       </div>
@@ -199,7 +199,7 @@
     <div id="questionEditorForm" class="editor-form"></div>
     <div class="editor-actions">
       <button onclick="saveQuestionEditor()">Sacuvaj</button>
-      <button onclick="closeQuestionEditor()">Otkaži</button>
+      <button onclick="closeQuestionEditor()">Otka?i</button>
     </div>
   </div>
 </div>
@@ -212,7 +212,11 @@
     var stageMessage = document.getElementById("qaStageMessage");
     var continueBtn = document.getElementById("qaContinueBtn");
     var isProjection = new URLSearchParams(window.location.search).get("projection") === "1";
+    var winnerHoldActive = false;
+    var holdTimer = null;
+
     if (!overlay || !boardWrap) return;
+
     if (continueBtn) {
       continueBtn.addEventListener("click", function () {
         if (typeof window.continueToNextStage === "function") {
@@ -228,10 +232,46 @@
       return "pictures/" + n + ".png";
     }
 
-    function startBoardAnimation(src, onDone) {
-      if (frontImage) frontImage.src = src;
+    function hideStageMessage() {
+      if (!stageMessage) return;
+      stageMessage.classList.remove("show");
+      stageMessage.classList.add("hidden");
+    }
+
+    function setPlayState(state) {
+      boardWrap.style.animationPlayState = state;
+      var front = boardWrap.querySelector('.qa-front img');
+      var back = boardWrap.querySelector('.qa-back img');
+      if (front) front.style.animationPlayState = state;
+      if (back) back.style.animationPlayState = state;
+    }
+
+    function clearHoldTimer() {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+    }
+
+    function startBoardAnimation(src, onDone, options) {
+      options = options || {};
+      var holdAtCenter = !!options.holdAtCenter;
+      var continueFromHold = !!options.continueFromHold;
+
+      if (continueFromHold) {
+        winnerHoldActive = false;
         if (continueBtn) continueBtn.classList.add("hidden");
+        setPlayState("running");
+        return;
+      }
+
+      clearHoldTimer();
+
+      if (frontImage) frontImage.src = src;
       if (backImage) backImage.src = src;
+      winnerHoldActive = false;
+      if (continueBtn) continueBtn.classList.add("hidden");
+      hideStageMessage();
 
       boardWrap.style.display = "";
       boardWrap.classList.remove("run");
@@ -239,14 +279,26 @@
 
       void boardWrap.offsetWidth;
       boardWrap.classList.add("run");
+      setPlayState("running");
 
       boardWrap.onanimationend = function () {
+        clearHoldTimer();
         boardWrap.style.display = "none";
-        setTimeout(function () {
-          overlay.classList.add("hidden");
-          if (typeof onDone === "function") onDone();
-        }, 900);
+        winnerHoldActive = false;
+        overlay.classList.add("hidden");
+        if (typeof onDone === "function") onDone();
       };
+
+      if (holdAtCenter) {
+        winnerHoldActive = true;
+        holdTimer = setTimeout(function () {
+          if (!winnerHoldActive) return;
+          setPlayState("paused");
+          if (continueBtn) {
+            continueBtn.classList.toggle("hidden", isProjection);
+          }
+        }, 2000);
+      }
     }
 
     function runQuizAnimation(roundNo, onDone) {
@@ -272,37 +324,40 @@
         requestAnimationFrame(function () {
           stageMessage.classList.add("show");
         });
+      } else {
+        hideStageMessage();
       }
 
       if (holdUntilManualContinue) {
+        winnerHoldActive = true;
         if (continueBtn) {
           continueBtn.classList.toggle("hidden", isProjection);
         }
         return;
       }
 
+      winnerHoldActive = false;
+      if (continueBtn) continueBtn.classList.add("hidden");
+
       setTimeout(function () {
-        if (shouldShowMessage && stageMessage) {
-          stageMessage.classList.remove("show");
-          stageMessage.classList.add("hidden");
-        }
+        hideStageMessage();
         startBoardAnimation(finalImage, onDone);
       }, 1500);
     }
 
-    function runSpecialImageTransition(imageSrc, onDone) {
-      startBoardAnimation(imageSrc || "pictures/druga.png", onDone);
+    function runSpecialImageTransition(imageSrc, onDone, options) {
+      startBoardAnimation(imageSrc || "pictures/druga.png", onDone, options || {});
     }
 
     window.runQuizAnimation = runQuizAnimation;
     window.runStageWinnerTransition = runStageWinnerTransition;
     window.runSpecialImageTransition = runSpecialImageTransition;
+    window.isWinnerHoldOverlayActive = function () { return winnerHoldActive; };
+
     window.dismissStageWinnerOverlay = function () {
-      if (!overlay) return;
-      if (stageMessage) {
-        stageMessage.classList.remove("show");
-        stageMessage.classList.add("hidden");
-      }
+      clearHoldTimer();
+      winnerHoldActive = false;
+      hideStageMessage();
       if (continueBtn) continueBtn.classList.add("hidden");
       boardWrap.style.display = "none";
       overlay.classList.add("hidden");
@@ -313,61 +368,6 @@
 <script src="game.js"></script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

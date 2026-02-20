@@ -28,6 +28,8 @@ let estimationMode = false;
 let estimationRevealed = false;
 let transitionInProgress = false;
 let pendingStageContinue = null;
+let pendingStageImage = null;
+let pendingWinnerImage = null;
 let transitionTimer = null;
 let transitionFlipTimer = null;
 const QUESTION_TRANSITION_FRONT_DELAY = 900;
@@ -160,7 +162,7 @@ function updateControlVisibility() {
 
   const stageContinueControls = document.getElementById("stageContinueControls");
   if (stageContinueControls) {
-    const showContinue = !IS_PROJECTION && !!pendingStageContinue;
+    const showContinue = false;
     stageContinueControls.classList.toggle("hidden", !showContinue);
   }
 }
@@ -305,17 +307,34 @@ function triggerProjectionAnimation(roundNo) {
   localStorage.setItem(SYNC_ANIMATION_KEY, JSON.stringify(payload));
 }
 
-function triggerProjectionStageWinner(message, imageSrc = "pictures/druga.png", showMessage = true) {
+function getWinnerImageForTeam(teamIndex) {
+  const name = (teams[teamIndex] && teams[teamIndex].name ? teams[teamIndex].name : "").toUpperCase();
+  if (name.includes("A1")) return "pictures/a1.png";
+  if (name.includes("A2")) return "pictures/a2.png";
+  if (name.includes("B1")) return "pictures/b1.png";
+  if (name.includes("B2")) return "pictures/b2.png";
+
+  const fallback = {
+    0: "pictures/a1.png",
+    1: "pictures/a2.png",
+    2: "pictures/b1.png",
+    3: "pictures/b2.png"
+  };
+  return fallback[teamIndex] || "pictures/druga.png";
+}
+function triggerProjectionStageWinner(message, imageSrc = "pictures/druga.png", showMessage = true, transitionMode = "") {
   if (IS_PROJECTION) return;
-  const payload = { message, imageSrc, showMessage, ts: Date.now() };
+  const payload = { message, imageSrc, showMessage, transitionMode, ts: Date.now() };
   if (syncChannel) syncChannel.postMessage({ type: "stage_winner", payload });
   localStorage.setItem(SYNC_STAGE_WINNER_KEY, JSON.stringify(payload));
 }
 
 function applyProjectionState(state) {
   if (!state) return;
-  if (typeof window.dismissStageWinnerOverlay === "function") {
-    window.dismissStageWinnerOverlay();
+  if (typeof window.isWinnerHoldOverlayActive === "function" && window.isWinnerHoldOverlayActive()) {
+    if (typeof window.dismissStageWinnerOverlay === "function") {
+      window.dismissStageWinnerOverlay();
+    }
   }
 
   stage = state.stage;
@@ -362,6 +381,34 @@ function applyProjectionState(state) {
 }
 
 function setupSync() {
+  const handleStageWinnerPayload = (payload) => {
+    const message = payload && payload.message ? payload.message : "POBJEDNIK JE TIM";
+    const imageSrc = payload && payload.imageSrc ? payload.imageSrc : "pictures/druga.png";
+    const showMessage = payload && Object.prototype.hasOwnProperty.call(payload, "showMessage") ? payload.showMessage : true;
+    const isWinnerImage = /(?:^|\/)(a1|a2|b1|b2)\.png$/i.test(imageSrc);
+    const transitionMode = payload && payload.transitionMode ? payload.transitionMode : "";
+    const holdActive = (typeof window.isWinnerHoldOverlayActive === "function") && window.isWinnerHoldOverlayActive();
+
+    if (!showMessage && isWinnerImage && typeof window.runSpecialImageTransition === "function") {
+      if (transitionMode === "resume") {
+        window.runSpecialImageTransition(imageSrc, function () {}, { continueFromHold: true });
+      } else if (transitionMode === "hold") {
+        window.runSpecialImageTransition(imageSrc, null, { holdAtCenter: true });
+      } else {
+        window.runSpecialImageTransition(
+          imageSrc,
+          holdActive ? function () {} : null,
+          holdActive ? { continueFromHold: true } : { holdAtCenter: true }
+        );
+      }
+      return;
+    }
+
+    if (typeof window.runStageWinnerTransition === "function") {
+      window.runStageWinnerTransition(message, showMessage ? null : function () {}, imageSrc, showMessage);
+    }
+  };
+
   if (syncChannel) {
     syncChannel.onmessage = (event) => {
       const msg = event.data || {};
@@ -371,11 +418,8 @@ function setupSync() {
           const roundNo = msg.payload && msg.payload.roundNo ? msg.payload.roundNo : 1;
           window.runQuizAnimation(roundNo);
         }
-        if (msg.type === "stage_winner" && typeof window.runStageWinnerTransition === "function") {
-          const message = msg.payload && msg.payload.message ? msg.payload.message : "POBJEDNIK JE TIM";
-          const imageSrc = msg.payload && msg.payload.imageSrc ? msg.payload.imageSrc : "pictures/druga.png";
-          const showMessage = msg.payload && Object.prototype.hasOwnProperty.call(msg.payload, "showMessage") ? msg.payload.showMessage : true;
-          window.runStageWinnerTransition(message, null, imageSrc, showMessage);
+        if (msg.type === "stage_winner") {
+          handleStageWinnerPayload(msg.payload || {});
         }
       } else if (msg.type === "request_state") {
         publishState();
@@ -407,13 +451,10 @@ function setupSync() {
       return;
     }
 
-    if (event.key === SYNC_STAGE_WINNER_KEY && typeof window.runStageWinnerTransition === "function") {
+    if (event.key === SYNC_STAGE_WINNER_KEY) {
       try {
         const parsed = JSON.parse(event.newValue);
-        const message = parsed && parsed.message ? parsed.message : "POBJEDNIK JE TIM";
-        const imageSrc = parsed && parsed.imageSrc ? parsed.imageSrc : "pictures/druga.png";
-        const showMessage = parsed && Object.prototype.hasOwnProperty.call(parsed, "showMessage") ? parsed.showMessage : true;
-        window.runStageWinnerTransition(message, null, imageSrc, showMessage);
+        handleStageWinnerPayload(parsed || {});
       } catch (_) {
         // ignore invalid payload
       }
@@ -422,9 +463,32 @@ function setupSync() {
 
   if (IS_PROJECTION) {
     if (syncChannel) syncChannel.postMessage({ type: "request_state" });
+    try {
+      if (typeof window.runQuizAnimation === "function") {
+        const rawAnim = localStorage.getItem(SYNC_ANIMATION_KEY);
+        if (rawAnim) {
+          const parsedAnim = JSON.parse(rawAnim);
+          const age = Date.now() - Number(parsedAnim.ts || 0);
+          if (age >= 0 && age < 10000) {
+            const roundNo = parsedAnim && parsedAnim.roundNo ? parsedAnim.roundNo : 1;
+            window.runQuizAnimation(roundNo);
+          }
+        }
+      }
+
+      const rawWinner = localStorage.getItem(SYNC_STAGE_WINNER_KEY);
+      if (rawWinner) {
+        const parsedWinner = JSON.parse(rawWinner);
+        const age = Date.now() - Number(parsedWinner.ts || 0);
+        if (age >= 0 && age < 10000) {
+          handleStageWinnerPayload(parsedWinner || {});
+        }
+      }
+    } catch (_) {
+      // ignore replay errors
+    }
   }
 }
-
 function showQuestionTransition(questionNo, onDone) {
   if (typeof onDone === "function") onDone();
 }
@@ -576,18 +640,20 @@ function endMatch() {
     stage = 2;
     roundIndex = 0;
 
-    const message = "POBJEDNIK JE TIM " + teams[winner].name + " - IGRA 2 POCINJE";
+    const winnerImage = getWinnerImageForTeam(winner);
     const continueNextStage = function () {
       currentTeam = 0;
       startStageEstimation();
     };
 
     pendingStageContinue = continueNextStage;
+    pendingStageImage = null;
+    pendingWinnerImage = winnerImage;
     updateControlVisibility();
 
-    triggerProjectionStageWinner(message, "pictures/druga.png", true);
-    if (typeof window.runStageWinnerTransition === "function") {
-      window.runStageWinnerTransition(message, null, "pictures/druga.png", true);
+    triggerProjectionStageWinner("", winnerImage, false, "hold");
+    if (typeof window.runSpecialImageTransition === "function") {
+      window.runSpecialImageTransition(winnerImage, null, { holdAtCenter: true });
     }
     return;
   } else if (stage === 2) {
@@ -596,18 +662,20 @@ function endMatch() {
     stage = 3;
     roundIndex = 0;
 
-    const message = "POBJEDNIK JE TIM " + teams[winner].name + " - FINALE!";
+    const winnerImage = getWinnerImageForTeam(winner);
     const continueNextStage = function () {
       currentTeam = 0;
       startStageEstimation();
     };
 
     pendingStageContinue = continueNextStage;
+    pendingStageImage = null;
+    pendingWinnerImage = winnerImage;
     updateControlVisibility();
 
-    triggerProjectionStageWinner(message, "pictures/finale.png", true);
-    if (typeof window.runStageWinnerTransition === "function") {
-      window.runStageWinnerTransition(message, null, "pictures/finale.png", true);
+    triggerProjectionStageWinner("", winnerImage, false, "hold");
+    if (typeof window.runSpecialImageTransition === "function") {
+      window.runSpecialImageTransition(winnerImage, null, { holdAtCenter: true });
     }
     return;
   } else {
@@ -629,18 +697,40 @@ function showWinnerScreen(winnerIndex) {
 
 function openProjection() {
   if (IS_PROJECTION || transitionInProgress || pendingStageContinue) return;
-  const url = new URL(window.location.href);
+  const url = new URL("index.html", window.location.href);
   url.searchParams.set("projection", "1");
-  window.open(url.toString(), "family-feud-projection");
+  url.searchParams.set("v", String(Date.now()));
+  const popup = window.open(url.toString(), "family-feud-projection");
+  if (!popup) {
+    window.location.href = url.toString();
+  }
 }
 
 function continueToNextStage() {
   if (IS_PROJECTION || transitionInProgress || !pendingStageContinue) return;
   const proceed = pendingStageContinue;
+  const winnerImage = pendingWinnerImage;
+  const imageSrc = pendingStageImage;
   pendingStageContinue = null;
+  pendingStageImage = null;
+  pendingWinnerImage = null;
   updateControlVisibility();
+  if (winnerImage) {
+    triggerProjectionStageWinner("", winnerImage, false, "resume");
+    if (typeof window.runSpecialImageTransition === "function") {
+      window.runSpecialImageTransition(winnerImage, proceed, { continueFromHold: true });
+      return;
+    }
+  }
   if (typeof window.dismissStageWinnerOverlay === "function") {
     window.dismissStageWinnerOverlay();
+  }
+  if (imageSrc) {
+    triggerProjectionStageWinner("", imageSrc, false);
+    if (typeof window.runSpecialImageTransition === "function") {
+      window.runSpecialImageTransition(imageSrc, proceed);
+      return;
+    }
   }
   proceed();
 }
@@ -986,6 +1076,9 @@ function saveQuestionEditor() {
 }
 
 function startGameFromIntro() {
+  pendingStageContinue = null;
+  pendingStageImage = null;
+  pendingWinnerImage = null;
   gameStarted = true;
   const start = document.getElementById("startScreen");
   const root = document.getElementById("gameRoot");
@@ -1025,6 +1118,7 @@ function goToStartScreen() {
 window.toggleControlMenu = toggleControlMenu;
 window.goToStartScreen = goToStartScreen;
 window.startGameFromIntro = startGameFromIntro;
+window.openProjection = openProjection;
 window.openQuestionEditor = openQuestionEditor;
 window.closeQuestionEditor = closeQuestionEditor;
 window.saveQuestionEditor = saveQuestionEditor;
@@ -1052,94 +1146,6 @@ if (!IS_PROJECTION) publishState();
 if (IS_PROJECTION) {
   // Projection waits for synced state; if none arrives, keep empty board.
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
