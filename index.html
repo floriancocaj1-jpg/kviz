@@ -158,29 +158,35 @@
         <button class="control-menu-item" onclick="goToStartScreen()">Pocetna stranica</button>
       </div>
     </div>
-    <div class="buttons">
-      <button onclick="revealAnswer(0)">Odgovor 1</button>
-      <button onclick="revealAnswer(1)">Odgovor 2</button>
-      <button onclick="revealAnswer(2)">Odgovor 3</button>
-      <button onclick="revealAnswer(3)">Odgovor 4</button>
-      <button onclick="revealAnswer(4)">Odgovor 5</button>
-      <button onclick="revealAnswer(5)">Odgovor 6</button>
-      <button onclick="revealAnswer(6)">Odgovor 7</button>
-      <button onclick="revealAnswer(7)">Odgovor 8</button>
-    </div>
-    <div class="buttons">
-      <button onclick="addStrike()">X</button>
-      <button onclick="steal()">STEAL</button>
-      <button onclick="endRound()">END ROUND</button>
-      <button onclick="switchTeam()">SWITCH TEAM</button>
-      <button onclick="openProjection()">PROJECIRAJ</button>
-    </div>
-    <div class="buttons hidden" id="estimationControls">
-      <button onclick="chooseAdvantageTeam(0)">PREDNOST TIM 1</button>
-      <button onclick="chooseAdvantageTeam(1)">PREDNOST TIM 2</button>
-    </div>
-    <div class="buttons hidden" id="stageContinueControls">
-      <button onclick="continueToNextStage()">NASTAVI</button>
+    <div class="control-layout">
+      <div class="control-actions">
+        <div class="buttons">
+          <button onclick="addStrike()">X</button>
+          <button onclick="steal()">STEAL</button>
+          <button onclick="endRound()">END ROUND</button>
+          <button onclick="switchTeam()">SWITCH TEAM</button>
+          <button onclick="openProjection()">PROJECIRAJ</button>
+        </div>
+        <div class="buttons hidden" id="estimationControls">
+          <button onclick="chooseAdvantageTeam(0)">PREDNOST TIM 1</button>
+          <button onclick="chooseAdvantageTeam(1)">PREDNOST TIM 2</button>
+        </div>
+        <div class="buttons hidden" id="stageContinueControls">
+          <button onclick="continueToNextStage()">NASTAVI</button>
+        </div>
+      </div>
+      <div class="reveal-panel">
+        <div class="reveal-grid">
+          <button class="reveal-btn" id="revealBtn0" onclick="revealAnswer(0)">Odgovor 1</button>
+          <button class="reveal-btn" id="revealBtn1" onclick="revealAnswer(1)">Odgovor 2</button>
+          <button class="reveal-btn" id="revealBtn2" onclick="revealAnswer(2)">Odgovor 3</button>
+          <button class="reveal-btn" id="revealBtn3" onclick="revealAnswer(3)">Odgovor 4</button>
+          <button class="reveal-btn" id="revealBtn4" onclick="revealAnswer(4)">Odgovor 5</button>
+          <button class="reveal-btn" id="revealBtn5" onclick="revealAnswer(5)">Odgovor 6</button>
+          <button class="reveal-btn" id="revealBtn6" onclick="revealAnswer(6)">Odgovor 7</button>
+          <button class="reveal-btn" id="revealBtn7" onclick="revealAnswer(7)">Odgovor 8</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>

@@ -168,6 +168,24 @@ function updateControlVisibility() {
   }
 }
 
+function updateRevealButtons(round) {
+  for (let i = 0; i < 8; i++) {
+    const btn = document.getElementById(`revealBtn${i}`);
+    if (!btn) continue;
+
+    const answer = round && Array.isArray(round.answers) ? round.answers[i] : null;
+    if (!answer) {
+      btn.classList.add("hidden");
+      btn.disabled = true;
+      continue;
+    }
+
+    btn.classList.remove("hidden");
+    btn.innerText = answer.text;
+    btn.disabled = revealed.includes(i);
+  }
+}
+
 function renderEstimationRound() {
   const prompt = getEstimationPrompt();
   const estimationRound = {
@@ -183,6 +201,7 @@ function renderEstimationRound() {
   setStrikesDisplay("");
   updateRoundTotal();
   updateTopBar();
+  updateRevealButtons(estimationRound);
   updateControlVisibility();
 }
 
@@ -508,6 +527,7 @@ function renderRoundBoard(round) {
   if (q) q.innerText = round.question;
   updateRoundTotal();
   updateTopBar();
+  updateRevealButtons(round);
   publishState();
 }
 // INIT ROUND
@@ -574,6 +594,7 @@ function revealAnswer(i) {
 
   roundPoints += round.answers[i].points * round.multiplier;
   updateRoundTotal();
+  updateRevealButtons(round);
   correctSound();
   publishState();
 }
@@ -694,16 +715,14 @@ function endMatch() {
     return;
   } else {
     const winnerImage = getWinnerImageForTeam(winner);
-    triggerProjectionStageWinner("", winnerImage, false, "auto");
+    triggerProjectionStageWinner("", winnerImage, false, "hold");
     if (typeof window.runSpecialImageTransition === "function") {
       window.runSpecialImageTransition(winnerImage, function () {
         showWinnerScreen(winner);
-        publishState();
       });
       return;
     }
     showWinnerScreen(winner);
-    publishState();
     return;
   }
 }
@@ -760,6 +779,7 @@ function continueToNextStage() {
 const QUESTIONS_STORAGE_KEY = "family_feud_questions";
 const ESTIMATION_STORAGE_KEY = "family_feud_estimation";
 const PERSISTENCE_KEY = "family_feud_persistent_data_v1";
+const SHARED_DATA_ENDPOINT = "/api/shared-data";
 const STAGE_OPTIONS = [1, 2, 3];
 let editorSelectedStage = 1;
 
@@ -882,6 +902,63 @@ function hydrateQuestionsFromStorage() {
   }
 
   savePersistentData();
+}
+
+function applyPersistencePayload(payload) {
+  if (!payload || typeof payload !== "object") return false;
+
+  let applied = false;
+  const storedQuestions = payload.stageQuestions;
+  const storedEstimation = payload.stageEstimation;
+
+  if (storedQuestions && typeof storedQuestions === "object") {
+    STAGE_OPTIONS.forEach((targetStage) => {
+      const data = storedQuestions[targetStage];
+      if (validateQuestionsData(data)) {
+        setQuestionsForStage(targetStage, data);
+        localStorage.setItem(getQuestionStorageKey(targetStage), JSON.stringify(data));
+        applied = true;
+      }
+    });
+  }
+
+  if (storedEstimation && typeof storedEstimation === "object") {
+    STAGE_OPTIONS.forEach((targetStage) => {
+      const prompt = storedEstimation[targetStage];
+      if (validateEstimationPrompt(prompt)) {
+        setEstimationPromptForStage(targetStage, prompt);
+        localStorage.setItem(getEstimationStorageKey(targetStage), JSON.stringify(prompt));
+        applied = true;
+      }
+    });
+  }
+
+  if (applied) savePersistentData();
+  return applied;
+}
+
+async function hydrateQuestionsFromSharedStore() {
+  try {
+    const response = await fetch(SHARED_DATA_ENDPOINT, { cache: "no-store" });
+    if (!response.ok) return false;
+
+    const payload = await response.json();
+    return applyPersistencePayload(payload);
+  } catch (_) {
+    return false;
+  }
+}
+
+async function saveSharedData() {
+  try {
+    await fetch(SHARED_DATA_ENDPOINT, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildPersistencePayload())
+    });
+  } catch (_) {
+    // Shared sync is optional; local save still remains available.
+  }
 }
 
 function renderQuestionEditorForm(targetStage) {
@@ -1072,6 +1149,7 @@ function saveQuestionEditor() {
     setQuestionsForStage(editorSelectedStage, parsed);
     localStorage.setItem(getQuestionStorageKey(editorSelectedStage), JSON.stringify(parsed));
     savePersistentData();
+    saveSharedData();
 
     if (editorSelectedStage === stage) {
       roundIndex = 0;
@@ -1161,10 +1239,15 @@ if (IS_PROJECTION) {
   if (root) root.classList.add("hidden");
 }
 
-hydrateQuestionsFromStorage();
-setupSync();
-updateControlVisibility();
-if (!IS_PROJECTION) publishState();
+async function initializeApp() {
+  hydrateQuestionsFromStorage();
+  await hydrateQuestionsFromSharedStore();
+  setupSync();
+  updateControlVisibility();
+  if (!IS_PROJECTION) publishState();
+}
+
+initializeApp();
 
 if (IS_PROJECTION) {
   // Projection waits for synced state; if none arrives, keep empty board.

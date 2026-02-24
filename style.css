@@ -498,6 +498,103 @@ body.projection-mode .main-oval {
   margin-top: 8px;
 }
 
+.control-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 460px);
+  gap: 18px;
+  align-items: start;
+}
+
+.control-actions {
+  text-align: center;
+}
+
+.reveal-panel {
+  justify-self: end;
+  width: 100%;
+}
+
+.reveal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.reveal-btn {
+  min-height: 78px;
+  height: 78px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 2px solid #0f4ea8;
+  background: linear-gradient(180deg, #b5e2ff 0%, #7ac8fb 20%, #3f97ef 52%, #1f6dcb 74%, #0f4ea8 100%);
+  color: #f7fbff;
+  text-transform: uppercase;
+  font-size: 18px;
+  line-height: 1.1;
+  text-align: center;
+  white-space: normal;
+  box-shadow: inset 0 0 0 2px #144f9c, 0 9px 0 #0d387f, 0 15px 18px rgba(0, 0, 0, 0.35);
+}
+
+.reveal-btn:hover {
+  background: linear-gradient(180deg, #d4eeff 0%, #9fd8ff 20%, #57aaf7 52%, #2a7ad7 74%, #175ab7 100%);
+}
+
+.reveal-btn:disabled {
+  cursor: default;
+  filter: grayscale(0.35) brightness(0.78);
+}
+
+body:not(.projection-mode) .studio {
+  display: grid;
+  grid-template-columns: minmax(1120px, 1280px) 360px;
+  grid-template-rows: auto auto;
+  justify-content: center;
+  align-items: start;
+  gap: 18px;
+}
+
+body:not(.projection-mode) .game-stage {
+  grid-column: 1;
+  grid-row: 1;
+  width: 1280px;
+  margin: 0;
+}
+
+body:not(.projection-mode) .control-panel {
+  padding-top: 56px;
+  display: contents;
+}
+
+body:not(.projection-mode) .control-layout {
+  display: contents;
+}
+
+body:not(.projection-mode) .reveal-panel {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: stretch;
+  align-self: center;
+}
+
+body:not(.projection-mode) .control-actions {
+  grid-column: 1;
+  grid-row: 2;
+  text-align: center;
+}
+
+body:not(.projection-mode) .reveal-grid {
+  gap: 8px;
+}
+
+body:not(.projection-mode) .reveal-btn {
+  min-height: 64px;
+  height: 64px;
+  font-size: 15px;
+  padding: 8px 10px;
+}
+
 button {
   padding: 10px 16px;
   font-size: 16px;
@@ -511,6 +608,39 @@ button {
 
 button:hover {
   background: linear-gradient(180deg, #ffe09a, #ffbb46);
+}
+
+@media (max-width: 1500px) {
+  body:not(.projection-mode) .studio {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 22px;
+  }
+
+  body:not(.projection-mode) .game-stage {
+    width: min(1280px, 100%);
+    margin: 0 auto;
+  }
+
+  body:not(.projection-mode) .control-panel {
+    display: block;
+    width: min(1200px, 100%);
+    margin: 0 auto;
+  }
+
+  body:not(.projection-mode) .control-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(380px, 460px);
+    gap: 18px;
+  }
+
+  body:not(.projection-mode) .reveal-btn {
+    min-height: 78px;
+    height: 78px;
+    font-size: 18px;
+    padding: 10px 12px;
+  }
 }
 
 @media (max-width: 1080px) {
@@ -532,6 +662,14 @@ button:hover {
   .main-oval::before,
   .main-oval::after {
     border-radius: 42px;
+  }
+
+  .control-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .reveal-panel {
+    justify-self: stretch;
   }
 }
 
