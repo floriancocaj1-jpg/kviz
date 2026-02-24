@@ -1,4 +1,4 @@
-const IS_PROJECTION = new URLSearchParams(window.location.search).get("projection") === "1";
+﻿const IS_PROJECTION = new URLSearchParams(window.location.search).get("projection") === "1";
 const SYNC_KEY = "family_feud_sync_state";
 const SYNC_ANIMATION_KEY = "family_feud_sync_animation";
 const SYNC_STAGE_WINNER_KEY = "family_feud_sync_stage_winner";
@@ -17,6 +17,7 @@ let teams = [
 let finalTeams = [];
 let activeTeams = [0, 1];
 let currentTeam = 0;
+let roundStarterTeam = 0;
 
 let strikes = 0;
 let strikeLabel = "";
@@ -131,9 +132,9 @@ function setStrikesDisplay(value) {
   if (el) el.innerText = value;
 }
 const DEFAULT_STAGE_ESTIMATION = {
-  1: { question: "PITANJE PROCJENE - GAME ONE", answer: "TIM SA NAJBLIZIM ODGOVOROM IMA PREDNOST" },
-  2: { question: "PITANJE PROCJENE - GAME TWO", answer: "TIM SA NAJBLIZIM ODGOVOROM IMA PREDNOST" },
-  3: { question: "PITANJE PROCJENE - FINALE", answer: "TIM SA NAJBLIZIM ODGOVOROM IMA PREDNOST" }
+  1: { question: "Koliko minuta traje jedan skolski cas?", answer: "Tacan broj: 45" },
+  2: { question: "Koliko dana ima godina?", answer: "Tacan broj: 365" },
+  3: { question: "Koliko igraca ima jedan fudbalski tim na terenu?", answer: "Tacan broj: 11" }
 };
 
 let STAGE_ESTIMATION = JSON.parse(JSON.stringify(DEFAULT_STAGE_ESTIMATION));
@@ -199,10 +200,12 @@ function startStageEstimation() {
 function chooseAdvantageTeam(teamIndex) {
   if (IS_PROJECTION || !estimationMode || transitionInProgress || pendingStageContinue) return;
   currentTeam = teamIndex === 1 ? 1 : 0;
+  roundStarterTeam = currentTeam;
   estimationMode = false;
   estimationRevealed = false;
   updateTopBar();
   updateControlVisibility();
+
 
   const roundNo = roundIndex + 1;
   triggerProjectionAnimation(roundNo);
@@ -282,6 +285,7 @@ function getStateSnapshot() {
     finalTeams,
     activeTeams,
     currentTeam,
+    roundStarterTeam,
     strikes,
     strikeLabel,
     revealed,
@@ -343,6 +347,7 @@ function applyProjectionState(state) {
   finalTeams = state.finalTeams;
   activeTeams = state.activeTeams;
   currentTeam = state.currentTeam;
+  roundStarterTeam = Number.isInteger(state.roundStarterTeam) ? state.roundStarterTeam : 0;
   strikes = state.strikes;
   strikeLabel = state.strikeLabel || "";
   revealed = state.revealed || [];
@@ -394,6 +399,8 @@ function setupSync() {
         window.runSpecialImageTransition(imageSrc, function () {}, { continueFromHold: true });
       } else if (transitionMode === "hold") {
         window.runSpecialImageTransition(imageSrc, null, { holdAtCenter: true });
+      } else if (transitionMode === "auto") {
+        window.runSpecialImageTransition(imageSrc, function () {});
       } else {
         window.runSpecialImageTransition(
           imageSrc,
@@ -509,6 +516,7 @@ function loadRound(showTransition = true) {
   estimationRevealed = false;
   updateControlVisibility();
   const round = getQuestionsForStage()[roundIndex];
+  currentTeam = roundStarterTeam;
   revealed = [];
   strikes = 0;
   roundPoints = 0;
@@ -615,6 +623,8 @@ function nextRound() {
     return;
   }
 
+  roundStarterTeam = roundStarterTeam === 0 ? 1 : 0;
+
   const roundNo = roundIndex + 1;
   triggerProjectionAnimation(roundNo);
 
@@ -643,6 +653,7 @@ function endMatch() {
     const winnerImage = getWinnerImageForTeam(winner);
     const continueNextStage = function () {
       currentTeam = 0;
+      roundStarterTeam = 0;
       startStageEstimation();
     };
 
@@ -661,10 +672,13 @@ function endMatch() {
     activeTeams = [finalTeams[0], finalTeams[1]];
     stage = 3;
     roundIndex = 0;
+    teams[activeTeams[0]].score = 0;
+    teams[activeTeams[1]].score = 0;
 
     const winnerImage = getWinnerImageForTeam(winner);
     const continueNextStage = function () {
       currentTeam = 0;
+      roundStarterTeam = 0;
       startStageEstimation();
     };
 
@@ -679,6 +693,15 @@ function endMatch() {
     }
     return;
   } else {
+    const winnerImage = getWinnerImageForTeam(winner);
+    triggerProjectionStageWinner("", winnerImage, false, "auto");
+    if (typeof window.runSpecialImageTransition === "function") {
+      window.runSpecialImageTransition(winnerImage, function () {
+        showWinnerScreen(winner);
+        publishState();
+      });
+      return;
+    }
     showWinnerScreen(winner);
     publishState();
     return;
@@ -687,11 +710,9 @@ function endMatch() {
 
 // WINNER
 function showWinnerScreen(winnerIndex) {
-  winSound();
   document.body.innerHTML = `
-  <div style="text-align:center;margin-top:200px;">
-  <h1 style="font-size:60px;color:gold;">POBJEDNIK JE TIM ${teams[winnerIndex].name}</h1>
-  <button onclick="location.reload()" style="padding:20px;font-size:25px;">Igraj ponovo</button>
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;">
+  <button onclick="location.reload()" style="padding:20px;font-size:25px;">Završi</button>
   </div>`;
 }
 
@@ -713,6 +734,7 @@ function continueToNextStage() {
   const imageSrc = pendingStageImage;
   pendingStageContinue = null;
   pendingStageImage = null;
+  roundStarterTeam = 0;
   pendingWinnerImage = null;
   updateControlVisibility();
   if (winnerImage) {
@@ -747,8 +769,8 @@ function cloneQuestions(data) {
 
 const DEFAULT_STAGE_QUESTIONS = {
   1: cloneQuestions(GAME_DATA.slice(0, 4)),
-  2: cloneQuestions(GAME_DATA.slice(0, 4)),
-  3: cloneQuestions(GAME_DATA.slice(0, 5))
+  2: cloneQuestions(GAME_DATA.slice(4, 8)),
+  3: cloneQuestions(GAME_DATA.slice(8, 13))
 };
 
 let STAGE_QUESTIONS = cloneQuestions(DEFAULT_STAGE_QUESTIONS);
@@ -1078,6 +1100,7 @@ function saveQuestionEditor() {
 function startGameFromIntro() {
   pendingStageContinue = null;
   pendingStageImage = null;
+  roundStarterTeam = 0;
   pendingWinnerImage = null;
   gameStarted = true;
   const start = document.getElementById("startScreen");
@@ -1146,12 +1169,6 @@ if (!IS_PROJECTION) publishState();
 if (IS_PROJECTION) {
   // Projection waits for synced state; if none arrives, keep empty board.
 }
-
-
-
-
-
-
 
 
 

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="sr">
 <head>
 <meta charset="UTF-8">
@@ -198,8 +198,8 @@
     </select>
     <div id="questionEditorForm" class="editor-form"></div>
     <div class="editor-actions">
-      <button onclick="saveQuestionEditor()">Sacuvaj</button>
-      <button onclick="closeQuestionEditor()">Otka?i</button>
+      <button onclick="saveQuestionEditor()">Sačuvaj</button>
+      <button onclick="closeQuestionEditor()">Otkaži</button>
     </div>
   </div>
 </div>
@@ -261,6 +261,13 @@
       if (continueFromHold) {
         winnerHoldActive = false;
         if (continueBtn) continueBtn.classList.add("hidden");
+        boardWrap.onanimationend = function () {
+          clearHoldTimer();
+          boardWrap.style.display = "none";
+          winnerHoldActive = false;
+          overlay.classList.add("hidden");
+          if (typeof onDone === "function") onDone();
+        };
         setPlayState("running");
         return;
       }
