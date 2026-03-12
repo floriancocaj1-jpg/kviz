@@ -49,9 +49,9 @@
   .qa-stage-message.hidden { display: none; }
     .qa-continue-btn {
       position: absolute;
-      bottom: 7vh;
+      top: 50%;
       left: 50%;
-      transform: translateX(-50%);
+      transform: translate(-50%, -50%);
       z-index: 9;
       padding: 14px 34px;
       font-size: clamp(18px, 2.3vw, 28px);
@@ -63,7 +63,17 @@
       box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
       cursor: pointer;
     }
-    .qa-continue-btn.hidden { display: none; }
+  .qa-continue-btn.hidden { display: none; }
+  .qa-prompt-curtain {
+    position: fixed;
+    inset: 0;
+    z-index: 7000;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(1200px 600px at 50% 30%, #0b1b3a 0%, #050913 45%, #02040a 100%);
+  }
+  .qa-prompt-curtain.hidden { display: none; }
   .qa-board-wrap.run .qa-front img {
     animation: qaCounterFront 4s cubic-bezier(0.22, 0.7, 0.2, 1) forwards;
   }
@@ -172,7 +182,7 @@
           <button onclick="chooseAdvantageTeam(1)">PREDNOST TIM 2</button>
         </div>
         <div class="buttons hidden" id="stageContinueControls">
-          <button onclick="continueToNextStage()">NASTAVI</button>
+          <button id="stageContinueBtn" onclick="continueToNextStage()">NASTAVI</button>
         </div>
       </div>
       <div class="reveal-panel">
@@ -190,6 +200,9 @@
     </div>
   </div>
 </div>
+<div class="qa-prompt-curtain hidden" id="qaPromptCurtain" aria-hidden="true">
+  <button class="qa-continue-btn" id="qaPromptContinueBtn" type="button">NASTAVI</button>
+</div>
 
 <div id="questionEditorModal" class="editor-modal hidden" aria-hidden="true">
   <div class="editor-backdrop" onclick="closeQuestionEditor()"></div>
@@ -202,6 +215,27 @@
       <option value="2">Game Two</option>
       <option value="3">Finale</option>
     </select>
+    <div class="editor-import">
+      <label class="editor-label" for="questionImportUrl">Google Sheet CSV link</label>
+      <div class="editor-import-row">
+        <input
+          id="questionImportUrl"
+          class="editor-question-input"
+          type="url"
+          placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=0"
+        >
+        <button type="button" onclick="importQuestionsFromGoogleSheet()">Uvezi pitanja</button>
+      </div>
+      <div class="editor-import-example">
+        <button type="button" class="editor-import-example-btn" onclick="useExampleGoogleSheetLink()">Ubaci primjer</button>
+        <a
+          href="https://docs.google.com/spreadsheets/d/1GLyA8ZLjbESjuKqB6EJ7TbCbbq4v59EHUHykUzvrIMs/edit?usp=sharing"
+          target="_blank"
+          rel="noopener"
+        >Primjer Google Sheet linka</a>
+      </div>
+      <p class="editor-help">Preuzmite primjer, preuredite pitanja i odgovore, pa zatim uvezite svoj Google Sheet link. Ako su pitanja razdvojena po kolonama za Prvu/Drugu/Finale, sistem ih automatski rasporedjuje po igrama.</p>
+    </div>
     <div id="questionEditorForm" class="editor-form"></div>
     <div class="editor-actions">
       <button onclick="saveQuestionEditor()">Sačuvaj</button>
@@ -217,14 +251,25 @@
     var backImage = document.getElementById("qaBackImage");
     var stageMessage = document.getElementById("qaStageMessage");
     var continueBtn = document.getElementById("qaContinueBtn");
+    var promptCurtain = document.getElementById("qaPromptCurtain");
+    var promptContinueBtn = document.getElementById("qaPromptContinueBtn");
     var isProjection = new URLSearchParams(window.location.search).get("projection") === "1";
     var winnerHoldActive = false;
     var holdTimer = null;
+    var promptAfterAnimation = false;
+    var stagePromptActive = false;
 
     if (!overlay || !boardWrap) return;
 
     if (continueBtn) {
       continueBtn.addEventListener("click", function () {
+        if (typeof window.continueToNextStage === "function") {
+          window.continueToNextStage();
+        }
+      });
+    }
+    if (promptContinueBtn) {
+      promptContinueBtn.addEventListener("click", function () {
         if (typeof window.continueToNextStage === "function") {
           window.continueToNextStage();
         }
@@ -263,18 +308,32 @@
       options = options || {};
       var holdAtCenter = !!options.holdAtCenter;
       var continueFromHold = !!options.continueFromHold;
+      var finished = false;
+      stagePromptActive = false;
+      if (promptCurtain) promptCurtain.classList.add("hidden");
+
+      function finishAnimation() {
+        if (finished) return;
+        finished = true;
+        clearHoldTimer();
+        boardWrap.style.display = "none";
+        winnerHoldActive = false;
+        if (promptAfterAnimation) {
+          promptAfterAnimation = false;
+          window.showStageContinuePrompt();
+        } else {
+          overlay.classList.add("hidden");
+        }
+        if (typeof onDone === "function") onDone();
+      }
 
       if (continueFromHold) {
         winnerHoldActive = false;
         if (continueBtn) continueBtn.classList.add("hidden");
-        boardWrap.onanimationend = function () {
-          clearHoldTimer();
-          boardWrap.style.display = "none";
-          winnerHoldActive = false;
-          overlay.classList.add("hidden");
-          if (typeof onDone === "function") onDone();
-        };
+        boardWrap.onanimationend = finishAnimation;
         setPlayState("running");
+        // Fallback: ako browser ne isporuci animationend nakon resume.
+        setTimeout(finishAnimation, 2600);
         return;
       }
 
@@ -294,13 +353,7 @@
       boardWrap.classList.add("run");
       setPlayState("running");
 
-      boardWrap.onanimationend = function () {
-        clearHoldTimer();
-        boardWrap.style.display = "none";
-        winnerHoldActive = false;
-        overlay.classList.add("hidden");
-        if (typeof onDone === "function") onDone();
-      };
+      boardWrap.onanimationend = finishAnimation;
 
       if (holdAtCenter) {
         winnerHoldActive = true;
@@ -370,11 +423,33 @@
     window.dismissStageWinnerOverlay = function () {
       clearHoldTimer();
       winnerHoldActive = false;
+      stagePromptActive = false;
       hideStageMessage();
       if (continueBtn) continueBtn.classList.add("hidden");
+      if (promptCurtain) promptCurtain.classList.add("hidden");
       boardWrap.style.display = "none";
       overlay.classList.add("hidden");
     };
+
+    window.showStageContinuePrompt = function () {
+      var isRunning = boardWrap.style.display !== "none" && boardWrap.classList.contains("run");
+      if (isRunning) {
+        promptAfterAnimation = true;
+        return;
+      }
+
+      clearHoldTimer();
+      winnerHoldActive = false;
+      stagePromptActive = true;
+      hideStageMessage();
+      boardWrap.style.display = "none";
+      overlay.classList.add("hidden");
+      if (continueBtn) continueBtn.classList.add("hidden");
+      if (promptCurtain) promptCurtain.classList.remove("hidden");
+      if (promptContinueBtn) promptContinueBtn.classList.toggle("hidden", isProjection);
+    };
+
+    window.isStageContinuePromptActive = function () { return stagePromptActive; };
   })();
 </script>
 <script src="questions.js"></script>

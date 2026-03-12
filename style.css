@@ -332,12 +332,18 @@ body.projection-mode .start-actions {
 
 .answer-text {
   left: 16px;
-  right: 82px;
+  right: 110px;
   font-size: 26px;
   text-align: left;
   text-transform: uppercase;
   top: 50%;
   transform: translateY(-50%);
+  line-height: 1.05;
+  max-height: 2.1em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .answer-points {
@@ -346,6 +352,8 @@ body.projection-mode .start-actions {
   color: #ffd14b;
   top: 50%;
   transform: translateY(-50%);
+  min-width: 72px;
+  text-align: right;
 }
 
 .answer.revealed {
@@ -680,7 +688,9 @@ button:hover {
 
   .answer-text {
     font-size: 20px;
-    right: 66px;
+    right: 86px;
+    line-height: 1.1;
+    max-height: 2.2em;
   }
 
   .answer-points {
@@ -828,6 +838,43 @@ body.projection-mode .start-actions {
   color: #eaf3ff;
   padding: 8px 10px;
   font-weight: 700;
+}
+
+.editor-import {
+  border: 1px solid #37579e;
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(4, 12, 30, 0.65);
+  display: grid;
+  gap: 8px;
+}
+
+.editor-import-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.editor-import-row .editor-question-input {
+  margin-bottom: 0;
+}
+
+.editor-import-example {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.editor-import-example-btn {
+  margin: 0;
+}
+
+.editor-import-example a {
+  color: #9fd5ff;
+  text-decoration: underline;
+  font-size: 13px;
 }
 
 

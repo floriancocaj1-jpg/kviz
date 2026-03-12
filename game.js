@@ -31,6 +31,7 @@ let transitionInProgress = false;
 let pendingStageContinue = null;
 let pendingStageImage = null;
 let pendingWinnerImage = null;
+let pendingStageStep = "finish_winner";
 let transitionTimer = null;
 let transitionFlipTimer = null;
 const QUESTION_TRANSITION_FRONT_DELAY = 900;
@@ -165,6 +166,15 @@ function updateControlVisibility() {
   if (stageContinueControls) {
     const showContinue = false;
     stageContinueControls.classList.toggle("hidden", !showContinue);
+  }
+
+  const overlayContinueBtn = document.getElementById("qaContinueBtn");
+  const promptContinueBtn = document.getElementById("qaPromptContinueBtn");
+  if (overlayContinueBtn) {
+    overlayContinueBtn.textContent = pendingStageStep === "start_stage_intro" ? "NASTAVI" : "ZAVRŠI";
+  }
+  if (promptContinueBtn) {
+    promptContinueBtn.textContent = "NASTAVI";
   }
 }
 
@@ -354,6 +364,9 @@ function triggerProjectionStageWinner(message, imageSrc = "pictures/druga.png", 
 
 function applyProjectionState(state) {
   if (!state) return;
+  if (typeof window.isStageContinuePromptActive === "function" && window.isStageContinuePromptActive()) {
+    return;
+  }
   if (typeof window.isWinnerHoldOverlayActive === "function" && window.isWinnerHoldOverlayActive()) {
     if (typeof window.dismissStageWinnerOverlay === "function") {
       window.dismissStageWinnerOverlay();
@@ -412,6 +425,13 @@ function setupSync() {
     const isWinnerImage = /(?:^|\/)(a1|a2|b1|b2)\.png$/i.test(imageSrc);
     const transitionMode = payload && payload.transitionMode ? payload.transitionMode : "";
     const holdActive = (typeof window.isWinnerHoldOverlayActive === "function") && window.isWinnerHoldOverlayActive();
+
+    if (transitionMode === "prompt") {
+      if (typeof window.showStageContinuePrompt === "function") {
+        window.showStageContinuePrompt();
+      }
+      return;
+    }
 
     if (!showMessage && isWinnerImage && typeof window.runSpecialImageTransition === "function") {
       if (transitionMode === "resume") {
@@ -679,8 +699,9 @@ function endMatch() {
     };
 
     pendingStageContinue = continueNextStage;
-    pendingStageImage = null;
+    pendingStageImage = "pictures/druga.png";
     pendingWinnerImage = winnerImage;
+    pendingStageStep = "finish_winner";
     updateControlVisibility();
 
     triggerProjectionStageWinner("", winnerImage, false, "hold");
@@ -704,8 +725,9 @@ function endMatch() {
     };
 
     pendingStageContinue = continueNextStage;
-    pendingStageImage = null;
+    pendingStageImage = "pictures/finale.png";
     pendingWinnerImage = winnerImage;
+    pendingStageStep = "finish_winner";
     updateControlVisibility();
 
     triggerProjectionStageWinner("", winnerImage, false, "hold");
@@ -751,35 +773,58 @@ function continueToNextStage() {
   const proceed = pendingStageContinue;
   const winnerImage = pendingWinnerImage;
   const imageSrc = pendingStageImage;
+
+  if (pendingStageStep === "finish_winner" && winnerImage) {
+    pendingStageStep = "start_stage_intro";
+    updateControlVisibility();
+    triggerProjectionStageWinner("", "", false, "prompt");
+    triggerProjectionStageWinner("", winnerImage, false, "resume");
+    if (typeof window.runSpecialImageTransition === "function") {
+      window.runSpecialImageTransition(winnerImage, function () {
+        if (typeof window.showStageContinuePrompt === "function") {
+          window.showStageContinuePrompt();
+        }
+      }, { continueFromHold: true });
+      return;
+    }
+    if (typeof window.showStageContinuePrompt === "function") {
+      window.showStageContinuePrompt();
+    }
+    return;
+  }
+
   pendingStageContinue = null;
   pendingStageImage = null;
   roundStarterTeam = 0;
   pendingWinnerImage = null;
+  pendingStageStep = "finish_winner";
   updateControlVisibility();
-  if (winnerImage) {
-    triggerProjectionStageWinner("", winnerImage, false, "resume");
-    if (typeof window.runSpecialImageTransition === "function") {
-      window.runSpecialImageTransition(winnerImage, proceed, { continueFromHold: true });
+
+  const runPendingStageImageThenProceed = function () {
+    if (!imageSrc) {
+      proceed();
       return;
     }
-  }
-  if (typeof window.dismissStageWinnerOverlay === "function") {
-    window.dismissStageWinnerOverlay();
-  }
-  if (imageSrc) {
-    triggerProjectionStageWinner("", imageSrc, false);
+
+    triggerProjectionStageWinner("", imageSrc, false, "auto");
     if (typeof window.runSpecialImageTransition === "function") {
       window.runSpecialImageTransition(imageSrc, proceed);
       return;
     }
+    proceed();
+  };
+
+  if (typeof window.dismissStageWinnerOverlay === "function") {
+    window.dismissStageWinnerOverlay();
   }
-  proceed();
+  runPendingStageImageThenProceed();
 }
 
 const QUESTIONS_STORAGE_KEY = "family_feud_questions";
 const ESTIMATION_STORAGE_KEY = "family_feud_estimation";
 const PERSISTENCE_KEY = "family_feud_persistent_data_v1";
 const SHARED_DATA_ENDPOINT = "/api/shared-data";
+const GOOGLE_SHEET_EXAMPLE_URL = "https://docs.google.com/spreadsheets/d/1GLyA8ZLjbESjuKqB6EJ7TbCbbq4v59EHUHykUzvrIMs/edit?usp=sharing";
 const STAGE_OPTIONS = [1, 2, 3];
 let editorSelectedStage = 1;
 
@@ -959,6 +1004,538 @@ async function saveSharedData() {
   } catch (_) {
     // Shared sync is optional; local save still remains available.
   }
+}
+
+function normalizeGoogleSheetCsvUrl(rawUrl) {
+  const trimmed = String(rawUrl || "").trim();
+  if (!trimmed) return "";
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(trimmed);
+  } catch (_) {
+    return "";
+  }
+
+  if (parsedUrl.hostname.includes("docs.google.com") && parsedUrl.pathname.includes("/spreadsheets/d/")) {
+    if (parsedUrl.searchParams.get("output") === "csv" || parsedUrl.pathname.includes("/export")) {
+      return parsedUrl.toString();
+    }
+
+    const match = parsedUrl.pathname.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!match || !match[1]) return "";
+    const sheetId = match[1];
+    const gid = parsedUrl.searchParams.get("gid") || "0";
+    return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${encodeURIComponent(gid)}`;
+  }
+
+  return parsedUrl.toString();
+}
+
+function parseCsvText(csvText) {
+  const text = String(csvText || "");
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    if (inQuotes) {
+      if (ch === '"' && next === '"') {
+        cell += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (ch === ",") {
+      row.push(cell.trim());
+      cell = "";
+      continue;
+    }
+    if (ch === "\n") {
+      row.push(cell.trim());
+      rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    if (ch === "\r") continue;
+    cell += ch;
+  }
+
+  if (cell.length > 0 || row.length > 0) {
+    row.push(cell.trim());
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function normalizeHeaderValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getHeaderIndex(headers, aliases) {
+  for (let i = 0; i < headers.length; i++) {
+    if (aliases.includes(headers[i])) return i;
+  }
+  return -1;
+}
+
+function getCellValue(row, index) {
+  if (!Array.isArray(row) || index < 0 || index >= row.length) return "";
+  return String(row[index] || "").trim();
+}
+
+function isQuestionHeader(value) {
+  return ["question", "pitanje", "pitanja"].includes(value);
+}
+
+function isAnswerHeader(value) {
+  return ["answer", "odgovor", "odgovori"].includes(value);
+}
+
+function isPointsHeader(value) {
+  return ["points", "poeni", "score", "bodovi", "bodovi%"].includes(value);
+}
+
+function resolveHeaderRowIndex(rows) {
+  for (let r = 0; r < rows.length; r++) {
+    const headerRow = (rows[r] || []).map(normalizeHeaderValue);
+    const questionCount = headerRow.filter((value) => isQuestionHeader(value)).length;
+    const hasAnswer = headerRow.some((value) => isAnswerHeader(value));
+    if (questionCount > 1 || (questionCount >= 1 && hasAnswer)) return r;
+  }
+  return 0;
+}
+
+function resolveStageFromLabel(rawLabel) {
+  const label = normalizeHeaderValue(rawLabel);
+  if (!label) return null;
+  if (label.includes("prva") || label.includes("game one") || label.includes("igra 1")) return 1;
+  if (label.includes("druga") || label.includes("game two") || label.includes("igra 2")) return 2;
+  if (label.includes("finale") || label.includes("final")) return 3;
+  if (label === "1") return 1;
+  if (label === "2") return 2;
+  if (label === "3") return 3;
+  return null;
+}
+
+function normalizeAnswersWithPoints(answerTexts, pointCandidates) {
+  const limitedAnswers = answerTexts.slice(0, 8);
+  const limitedPoints = pointCandidates.slice(0, limitedAnswers.length);
+  const validPointsCount = limitedPoints.filter((value) => Number.isFinite(value) && value >= 0).length;
+
+  let finalPoints;
+  if (validPointsCount === limitedAnswers.length && validPointsCount > 0) {
+    finalPoints = limitedPoints.map((value) => Math.round(value));
+  } else {
+    finalPoints = generateLogicalAutoPoints(limitedAnswers.length);
+  }
+
+  return limitedAnswers.map((text, index) => ({
+    text,
+    points: finalPoints[index]
+  }));
+}
+
+function parseOptionalPoints(rawValue) {
+  const raw = String(rawValue || "").trim().replace(",", ".");
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+function parseMultiStageColumnLayout(rows, headerRowIndex) {
+  const headerRow = (rows[headerRowIndex] || []).map(normalizeHeaderValue);
+  const stageLabelRow = headerRowIndex > 0 ? (rows[headerRowIndex - 1] || []) : [];
+  const dataStartRow = headerRowIndex + 1;
+
+  const columnBlocks = [];
+  for (let col = 0; col < headerRow.length; col++) {
+    if (!isQuestionHeader(headerRow[col])) continue;
+    const answerCol = isAnswerHeader(headerRow[col + 1]) ? col + 1 : -1;
+    const pointsCol = isPointsHeader(headerRow[col + 2]) ? col + 2 : -1;
+    const stageNumber = resolveStageFromLabel(getCellValue(stageLabelRow, col));
+    columnBlocks.push({
+      questionCol: col,
+      answerCol,
+      pointsCol,
+      stageNumber
+    });
+  }
+
+  if (columnBlocks.length < 2) return null;
+
+  const freeStages = [1, 2, 3];
+  columnBlocks.forEach((block, index) => {
+    if (block.stageNumber && freeStages.includes(block.stageNumber)) {
+      freeStages.splice(freeStages.indexOf(block.stageNumber), 1);
+      return;
+    }
+    block.stageNumber = freeStages.length > 0 ? freeStages.shift() : ((index % 3) + 1);
+  });
+
+  const questionsByStage = { 1: [], 2: [], 3: [] };
+
+  columnBlocks.forEach((block) => {
+    let currentQuestion = "";
+    let currentAnswers = [];
+    let currentPoints = [];
+
+    const flushCurrent = () => {
+      if (!currentQuestion) return;
+      if (currentAnswers.length === 0) return;
+      questionsByStage[block.stageNumber].push({
+        question: currentQuestion,
+        multiplier: 1,
+        answers: normalizeAnswersWithPoints(currentAnswers, currentPoints)
+      });
+    };
+
+    for (let r = dataStartRow; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const questionValue = getCellValue(row, block.questionCol);
+      const answerValue = block.answerCol >= 0 ? getCellValue(row, block.answerCol) : "";
+      const pointsValueRaw = block.pointsCol >= 0 ? getCellValue(row, block.pointsCol) : "";
+      const parsedPoints = parseOptionalPoints(pointsValueRaw);
+
+      if (questionValue) {
+        flushCurrent();
+        currentQuestion = questionValue;
+        currentAnswers = [];
+        currentPoints = [];
+      }
+
+      if (!currentQuestion) continue;
+      if (answerValue) {
+        currentAnswers.push(answerValue);
+        currentPoints.push(parsedPoints);
+      }
+    }
+
+    flushCurrent();
+  });
+
+  const hasAnyQuestion = STAGE_OPTIONS.some((targetStage) => questionsByStage[targetStage].length > 0);
+  if (!hasAnyQuestion) return null;
+
+  return questionsByStage;
+}
+
+function generateLogicalAutoPoints(answerCount) {
+  const count = Math.max(0, Number(answerCount) || 0);
+  if (count === 0) return [];
+  if (count === 1) return [100];
+
+  const weights = [];
+  let current = 1 + Math.random() * 0.45;
+
+  for (let i = 0; i < count; i++) {
+    if (i > 0) {
+      const drop = 0.08 + Math.random() * 0.2;
+      current = Math.max(0.06, current - drop);
+    }
+    weights.push(current);
+  }
+
+  const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+  let points = weights.map((w) => Math.max(1, Math.round((w / totalWeight) * 100)));
+
+  for (let i = 1; i < points.length; i++) {
+    if (points[i] > points[i - 1]) points[i] = points[i - 1];
+    if (points[i] < 1) points[i] = 1;
+  }
+
+  let diff = 100 - points.reduce((sum, p) => sum + p, 0);
+  if (diff > 0) {
+    points[0] += diff;
+  } else if (diff < 0) {
+    diff = Math.abs(diff);
+    for (let i = points.length - 1; i >= 0 && diff > 0; i--) {
+      const removable = Math.max(0, points[i] - 1);
+      if (removable === 0) continue;
+      const take = Math.min(removable, diff);
+      points[i] -= take;
+      diff -= take;
+    }
+  }
+
+  for (let i = 1; i < points.length; i++) {
+    if (points[i] > points[i - 1]) points[i] = points[i - 1];
+  }
+
+  return points;
+}
+
+function parseImportedSheetData(rows, fallbackEstimationPrompt) {
+  if (!Array.isArray(rows) || rows.length < 2) {
+    throw new Error("Google Sheet nema dovoljno podataka za uvoz.");
+  }
+
+  const headerRowIndex = resolveHeaderRowIndex(rows);
+  const dataStartRow = headerRowIndex + 1;
+  const headers = (rows[headerRowIndex] || []).map(normalizeHeaderValue);
+  const stageQuestions = parseMultiStageColumnLayout(rows, headerRowIndex);
+
+  if (stageQuestions) {
+    const estimationByStage = {};
+    STAGE_OPTIONS.forEach((targetStage) => {
+      estimationByStage[targetStage] = getEstimationPrompt(targetStage);
+      if (stageQuestions[targetStage] && !validateQuestionsData(stageQuestions[targetStage])) {
+        throw new Error(`Neispravan format pitanja za igru ${targetStage}.`);
+      }
+    });
+
+    return {
+      questionsByStage: stageQuestions,
+      estimationByStage
+    };
+  }
+
+  const questionIdx = getHeaderIndex(headers, ["question", "pitanje", "pitanja"]);
+  const answerIdx = getHeaderIndex(headers, ["answer", "odgovor", "odgovori"]);
+  const pointsIdx = getHeaderIndex(headers, ["points", "poeni", "score", "broj"]);
+  const typeIdx = getHeaderIndex(headers, ["type", "tip"]);
+  const roundIdx = getHeaderIndex(headers, ["round", "runda", "pitanje_broj", "broj_pitanja"]);
+  const orderIdx = getHeaderIndex(headers, ["order", "redoslijed", "redosled", "sort"]);
+
+  if (questionIdx === -1) throw new Error("CSV mora imati kolonu question/pitanje.");
+
+  let estimationPrompt = (fallbackEstimationPrompt && validateEstimationPrompt(fallbackEstimationPrompt))
+    ? { question: fallbackEstimationPrompt.question, answer: fallbackEstimationPrompt.answer }
+    : null;
+
+  const isWideFormat = answerIdx === -1 || pointsIdx === -1;
+  if (isWideFormat) {
+    const reserved = new Set([questionIdx, typeIdx, roundIdx, orderIdx].filter((idx) => idx >= 0));
+    const answerColumnIndexes = [];
+    for (let col = 0; col < headers.length; col++) {
+      if (!reserved.has(col)) answerColumnIndexes.push(col);
+    }
+
+    if (answerColumnIndexes.length === 0) {
+      throw new Error("Nema kolona sa odgovorima. Dodaj kolone desno od pitanja.");
+    }
+
+    const parsedQuestions = [];
+    for (let i = dataStartRow; i < rows.length; i++) {
+      const row = rows[i];
+      if (!Array.isArray(row)) continue;
+
+      const typeRaw = getCellValue(row, typeIdx).toLowerCase();
+      const question = getCellValue(row, questionIdx);
+      if (!question && answerColumnIndexes.every((idx) => !getCellValue(row, idx)) && !typeRaw) continue;
+
+      const isEstimation = ["estimation", "estimate", "procjena", "procena"].includes(typeRaw);
+      const answersRaw = answerColumnIndexes
+        .map((idx) => getCellValue(row, idx))
+        .filter((value) => value.length > 0);
+
+      if (isEstimation) {
+        const estimationAnswer = answersRaw[0] || "";
+        if (!question || !estimationAnswer) {
+          throw new Error(`Red ${i + 1}: procjena mora imati pitanje i prvi odgovor.`);
+        }
+        estimationPrompt = { question, answer: estimationAnswer };
+        continue;
+      }
+
+      if (!question) throw new Error(`Red ${i + 1}: nedostaje pitanje.`);
+      if (answersRaw.length === 0) {
+        throw new Error(`Red ${i + 1}: pitanje mora imati barem jedan odgovor.`);
+      }
+
+      const limitedAnswers = answersRaw.slice(0, 8);
+      const autoPoints = generateLogicalAutoPoints(limitedAnswers.length);
+      parsedQuestions.push({
+        question,
+        multiplier: 1,
+        answers: limitedAnswers.map((text, idx) => ({ text, points: autoPoints[idx] }))
+      });
+    }
+
+    if (!validateQuestionsData(parsedQuestions)) {
+      throw new Error("Uvezeni podaci nisu validni.");
+    }
+
+    return {
+      questions: parsedQuestions,
+      estimation: (estimationPrompt && validateEstimationPrompt(estimationPrompt))
+        ? estimationPrompt
+        : getEstimationPrompt(editorSelectedStage)
+    };
+  }
+
+  const grouped = new Map();
+  let orderCounter = 0;
+
+  for (let i = dataStartRow; i < rows.length; i++) {
+    const row = rows[i];
+    if (!Array.isArray(row)) continue;
+
+    const typeRaw = getCellValue(row, typeIdx).toLowerCase();
+    const question = getCellValue(row, questionIdx);
+    const answer = getCellValue(row, answerIdx);
+    const pointsRaw = getCellValue(row, pointsIdx);
+    const roundValue = getCellValue(row, roundIdx);
+    const orderValue = getCellValue(row, orderIdx);
+
+    if (!question && !answer && !pointsRaw && !typeRaw) continue;
+
+    const isEstimation = ["estimation", "estimate", "procjena", "procena"].includes(typeRaw);
+    if (isEstimation) {
+      if (!question || !answer) {
+        throw new Error(`Red ${i + 1}: procjena mora imati pitanje i odgovor.`);
+      }
+      estimationPrompt = { question, answer };
+      continue;
+    }
+
+    if (!question) throw new Error(`Red ${i + 1}: nedostaje pitanje.`);
+    if (!answer) throw new Error(`Red ${i + 1}: nedostaje odgovor.`);
+
+    const pointsValue = parseOptionalPoints(pointsRaw);
+    if (pointsValue === null && String(pointsRaw || "").trim() !== "") {
+      throw new Error(`Red ${i + 1}: poeni moraju biti broj 0 ili vece.`);
+    }
+
+    const groupingKey = roundValue ? `round:${roundValue}` : `question:${question.toLowerCase()}`;
+    if (!grouped.has(groupingKey)) {
+      const parsedOrder = Number(orderValue);
+      grouped.set(groupingKey, {
+        question,
+        multiplier: 1,
+        answers: [],
+        sortOrder: Number.isFinite(parsedOrder) ? parsedOrder : orderCounter++
+      });
+    }
+
+    const entry = grouped.get(groupingKey);
+    if (!entry.question && question) entry.question = question;
+    entry.answers.push({ text: answer, points: pointsValue });
+  }
+
+  const parsedQuestions = Array.from(grouped.values())
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((item) => ({
+      question: item.question,
+      multiplier: item.multiplier,
+      answers: normalizeAnswersWithPoints(
+        item.answers.slice(0, 8).map((ans) => ans.text),
+        item.answers.slice(0, 8).map((ans) => ans.points)
+      )
+    }));
+
+  if (!validateQuestionsData(parsedQuestions)) {
+    throw new Error("Uvezeni podaci nisu validni. Provjeri da svako pitanje ima bar jedan odgovor.");
+  }
+
+  return {
+    questions: parsedQuestions,
+    estimation: (estimationPrompt && validateEstimationPrompt(estimationPrompt))
+      ? estimationPrompt
+      : getEstimationPrompt(editorSelectedStage)
+  };
+}
+
+async function importQuestionsFromGoogleSheet() {
+  if (IS_PROJECTION || transitionInProgress || pendingStageContinue) return;
+
+  const input = document.getElementById("questionImportUrl");
+  const importButton = document.querySelector(".editor-import-row button");
+  if (!input) return;
+
+  const csvUrl = normalizeGoogleSheetCsvUrl(input.value);
+  if (!csvUrl) {
+    alert("Unesi ispravan Google Sheet link.");
+    return;
+  }
+
+  try {
+    if (importButton) importButton.disabled = true;
+
+    const response = await fetch(csvUrl, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error("Ne mogu preuzeti Google Sheet. Provjeri da je fajl javno dostupan.");
+    }
+
+    const csvText = await response.text();
+    const rows = parseCsvText(csvText);
+    const parsed = parseImportedSheetData(rows, getEstimationPrompt(editorSelectedStage));
+
+    if (parsed && parsed.questionsByStage) {
+      STAGE_OPTIONS.forEach((targetStage) => {
+        const importedQuestions = parsed.questionsByStage[targetStage];
+        if (validateQuestionsData(importedQuestions)) {
+          setQuestionsForStage(targetStage, importedQuestions);
+          localStorage.setItem(getQuestionStorageKey(targetStage), JSON.stringify(importedQuestions));
+        }
+
+        const importedEstimation = parsed.estimationByStage && parsed.estimationByStage[targetStage];
+        if (validateEstimationPrompt(importedEstimation)) {
+          setEstimationPromptForStage(targetStage, importedEstimation);
+          localStorage.setItem(getEstimationStorageKey(targetStage), JSON.stringify(importedEstimation));
+        }
+      });
+    } else {
+      setEstimationPromptForStage(editorSelectedStage, parsed.estimation);
+      localStorage.setItem(getEstimationStorageKey(editorSelectedStage), JSON.stringify(parsed.estimation));
+
+      setQuestionsForStage(editorSelectedStage, parsed.questions);
+      localStorage.setItem(getQuestionStorageKey(editorSelectedStage), JSON.stringify(parsed.questions));
+    }
+
+    savePersistentData();
+    saveSharedData();
+    renderQuestionEditorForm(editorSelectedStage);
+
+    if (editorSelectedStage === stage) {
+      roundIndex = 0;
+      strikes = 0;
+      roundPoints = 0;
+      stealMode = false;
+      revealed = [];
+
+      if (estimationMode) {
+        estimationRevealed = false;
+        renderEstimationRound();
+        publishState();
+      } else {
+        loadRound(false);
+      }
+    }
+
+    if (parsed && parsed.questionsByStage) {
+      alert("Pitanja su uspjesno uvezena i rasporedjena po igrama (Prva/Druga/Finale).");
+    } else {
+      alert("Pitanja su uspjesno uvezena iz Google Sheet-a.");
+    }
+  } catch (err) {
+    alert(err && err.message ? err.message : "Neuspjesan uvoz pitanja.");
+  } finally {
+    if (importButton) importButton.disabled = false;
+  }
+}
+
+function useExampleGoogleSheetLink() {
+  const input = document.getElementById("questionImportUrl");
+  if (!input) return;
+  input.value = GOOGLE_SHEET_EXAMPLE_URL;
+  input.focus();
 }
 
 function renderQuestionEditorForm(targetStage) {
@@ -1180,6 +1757,7 @@ function startGameFromIntro() {
   pendingStageImage = null;
   roundStarterTeam = 0;
   pendingWinnerImage = null;
+  pendingStageStep = "finish_winner";
   gameStarted = true;
   const start = document.getElementById("startScreen");
   const root = document.getElementById("gameRoot");
@@ -1223,6 +1801,8 @@ window.openProjection = openProjection;
 window.openQuestionEditor = openQuestionEditor;
 window.closeQuestionEditor = closeQuestionEditor;
 window.saveQuestionEditor = saveQuestionEditor;
+window.importQuestionsFromGoogleSheet = importQuestionsFromGoogleSheet;
+window.useExampleGoogleSheetLink = useExampleGoogleSheetLink;
 window.onQuestionEditorStageChange = onQuestionEditorStageChange;
 window.chooseAdvantageTeam = chooseAdvantageTeam;
 window.continueToNextStage = continueToNextStage;
