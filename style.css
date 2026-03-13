@@ -817,6 +817,15 @@ button:hover {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}.settings-actions {
+  justify-content: flex-start;
+  flex-direction: column;
+  align-items: center;
+}
+
+.settings-actions button {
+  width: 220px;
+  margin: 0;
 }
 body.projection-mode .start-actions {
   display: none;
@@ -959,4 +968,43 @@ body.projection-mode .start-logo {
 
 body.projection-mode #stageContinueControls {
   display: none !important; 
+}
+
+
+
+.settings-title {
+  text-align: center;
+}
+
+
+.settings-sound-panel {
+  display: grid;
+  gap: 8px;
+  width: min(360px, 100%);
+  margin: 0 auto 8px;
+  padding: 12px 14px;
+  border: 1px solid #37579e;
+  border-radius: 10px;
+  background: rgba(4, 12, 30, 0.65);
+}
+
+.settings-subtitle {
+  margin: 0 0 4px;
+  text-align: center;
+  color: #eaf3ff;
+  font-size: 18px;
+}
+
+.settings-sound-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: #cfe4ff;
+  font-size: 14px;
+}
+
+.settings-sound-range {
+  width: 100%;
+  margin: 0 0 4px;
 }

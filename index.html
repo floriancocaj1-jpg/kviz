@@ -132,10 +132,44 @@
     >
     <div class="start-actions">
       <button class="start-btn" onclick="startGameFromIntro()">Igraj</button>
-      <button class="start-btn start-btn-secondary" onclick="openQuestionEditor()">Uredi pitanja</button>
+      <button class="start-btn start-btn-secondary" onclick="openSettingsModal()">Postavke</button>
       <button class="start-btn start-btn-secondary" onclick="openProjection()">Projeciraj</button>
     </div>
 </div>
+</div>
+
+<div id="settingsModal" class="editor-modal hidden" aria-hidden="true">
+  <div class="editor-backdrop" onclick="closeSettingsModal()"></div>
+  <div class="editor-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <h2 id="settingsTitle" class="settings-title">Postavke</h2>
+    <div class="settings-sound-panel">
+      <h3 class="settings-subtitle">Zvuk</h3>
+      <label class="settings-sound-row" for="soundCorrectRange">
+        <span>Tacan odgovor</span>
+        <strong id="soundCorrectValue">95%</strong>
+      </label>
+      <input id="soundCorrectRange" class="settings-sound-range" type="range" min="0" max="100" step="1" oninput="updateSoundVolume('correct', this.value)">
+      <label class="settings-sound-row" for="soundWrongRange">
+        <span>Pogresan odgovor</span>
+        <strong id="soundWrongValue">95%</strong>
+      </label>
+      <input id="soundWrongRange" class="settings-sound-range" type="range" min="0" max="100" step="1" oninput="updateSoundVolume('wrong', this.value)">
+      <label class="settings-sound-row" for="soundSuddenDeathRange">
+        <span>Sudden Death</span>
+        <strong id="soundSuddenDeathValue">95%</strong>
+      </label>
+      <input id="soundSuddenDeathRange" class="settings-sound-range" type="range" min="0" max="100" step="1" oninput="updateSoundVolume('suddenDeath', this.value)">
+      <label class="settings-sound-row" for="soundWinRange">
+        <span>Pobjeda</span>
+        <strong id="soundWinValue">95%</strong>
+      </label>
+      <input id="soundWinRange" class="settings-sound-range" type="range" min="0" max="100" step="1" oninput="updateSoundVolume('win', this.value)">
+    </div>
+    <div class="editor-actions settings-actions">
+      <button type="button" onclick="openQuestionEditorFromSettings()">Uredi pitanja</button>
+      <button type="button" onclick="closeSettingsModal()">Zatvori</button>
+    </div>
+  </div>
 </div>
 
 <div id="gameRoot" class="studio hidden">
@@ -175,7 +209,10 @@
           <button onclick="steal()">STEAL</button>
           <button onclick="endRound()">END ROUND</button>
           <button onclick="switchTeam()">SWITCH TEAM</button>
-          <button onclick="openProjection()">PROJECIRAJ</button>
+          <button id="controlProjectionBtn" onclick="openProjection()">PROJECIRAJ</button>
+        </div>
+        <div class="buttons">
+          <button id="controlSettingsBtn" onclick="openQuestionEditor()">POSTAVKE</button>
         </div>
         <div class="buttons hidden" id="estimationControls">
           <button onclick="chooseAdvantageTeam(0)">PREDNOST TIM 1</button>
@@ -279,7 +316,7 @@
     function resolveImage(roundNo) {
       var n = Number(roundNo);
       if (!Number.isFinite(n)) n = 1;
-      n = Math.max(1, Math.min(5, Math.floor(n)));
+      n = Math.max(1, Math.floor(n));
       return "pictures/" + n + ".png";
     }
 
@@ -456,6 +493,14 @@
 <script src="game.js"></script>
 </body>
 </html>
+
+
+
+
+
+
+
+
 
 
 

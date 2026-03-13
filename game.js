@@ -17,7 +17,6 @@ let teams = [
 let finalTeams = [];
 let activeTeams = [0, 1];
 let currentTeam = 0;
-let roundStarterTeam = 0;
 
 let strikes = 0;
 let strikeLabel = "";
@@ -31,7 +30,6 @@ let transitionInProgress = false;
 let pendingStageContinue = null;
 let pendingStageImage = null;
 let pendingWinnerImage = null;
-let pendingStageStep = "finish_winner";
 let transitionTimer = null;
 let transitionFlipTimer = null;
 const QUESTION_TRANSITION_FRONT_DELAY = 900;
@@ -40,25 +38,97 @@ const QUESTION_TRANSITION_DURATION = 2600;
 // AUDIO
 const SOUND_ENABLED = true;
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const SOUND_SETTINGS_KEY = "family_feud_sound_settings_v1";
+let activeSuddenDeathAudio = null;
+const DEFAULT_SOUND_VOLUMES = {
+  correct: 95,
+  wrong: 95,
+  suddenDeath: 95,
+  win: 95
+};
 
-function tone(freq, dur) {
+function normalizeSoundVolume(value, fallback = 95) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(parsed)));
+}
+
+function loadSoundVolumes() {
+  try {
+    const raw = localStorage.getItem(SOUND_SETTINGS_KEY);
+    if (!raw) return { ...DEFAULT_SOUND_VOLUMES };
+    const parsed = JSON.parse(raw);
+    return {
+      correct: normalizeSoundVolume(parsed && parsed.correct, DEFAULT_SOUND_VOLUMES.correct),
+      wrong: normalizeSoundVolume(parsed && parsed.wrong, DEFAULT_SOUND_VOLUMES.wrong),
+      suddenDeath: normalizeSoundVolume(parsed && parsed.suddenDeath, DEFAULT_SOUND_VOLUMES.suddenDeath),
+      win: normalizeSoundVolume(parsed && parsed.win, DEFAULT_SOUND_VOLUMES.win)
+    };
+  } catch (_) {
+    return { ...DEFAULT_SOUND_VOLUMES };
+  }
+}
+
+let SOUND_VOLUMES = loadSoundVolumes();
+
+function getSoundVolume(name) {
+  return normalizeSoundVolume(SOUND_VOLUMES[name], DEFAULT_SOUND_VOLUMES[name] || 95) / 100;
+}
+
+function syncSoundSettingsUI() {
+  const config = {
+    correct: ["soundCorrectRange", "soundCorrectValue"],
+    wrong: ["soundWrongRange", "soundWrongValue"],
+    suddenDeath: ["soundSuddenDeathRange", "soundSuddenDeathValue"],
+    win: ["soundWinRange", "soundWinValue"]
+  };
+
+  Object.entries(config).forEach(([key, ids]) => {
+    const [rangeId, valueId] = ids;
+    const range = document.getElementById(rangeId);
+    const value = document.getElementById(valueId);
+    const volume = normalizeSoundVolume(SOUND_VOLUMES[key], DEFAULT_SOUND_VOLUMES[key] || 95);
+    if (range) range.value = String(volume);
+    if (value) value.innerText = `${volume}%`;
+  });
+}
+
+function setSoundVolume(name, value) {
+  if (!Object.prototype.hasOwnProperty.call(DEFAULT_SOUND_VOLUMES, name)) return;
+  SOUND_VOLUMES[name] = normalizeSoundVolume(value, DEFAULT_SOUND_VOLUMES[name]);
+  try {
+    localStorage.setItem(SOUND_SETTINGS_KEY, JSON.stringify(SOUND_VOLUMES));
+  } catch (_) {
+    // ignore storage errors
+  }
+  syncSoundSettingsUI();
+}
+
+function tone(freq, dur, volumeMultiplier = 1) {
   if (!SOUND_ENABLED) return;
+  const volume = Math.max(0, Number(volumeMultiplier) || 0);
+  if (volume <= 0) return;
   const o = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
   o.type = "square";
   o.frequency.value = freq;
-  o.connect(audioCtx.destination);
+  gain.gain.value = 0.18 * volume;
+  o.connect(gain);
+  gain.connect(audioCtx.destination);
   o.start();
   setTimeout(() => o.stop(), dur);
 }
 
-function bellTone(freq, dur, gainLevel, type = "sine") {
+function bellTone(freq, dur, gainLevel, type = "sine", volumeMultiplier = 1) {
   if (!SOUND_ENABLED) return;
   const now = audioCtx.currentTime;
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
   osc.type = type;
   osc.frequency.value = freq;
-  gain.gain.setValueAtTime(gainLevel, now);
+  const volume = Math.max(0, Number(volumeMultiplier) || 0);
+  if (volume <= 0) return;
+  gain.gain.setValueAtTime(gainLevel * volume, now);
   gain.gain.exponentialRampToValueAtTime(0.0001, now + dur / 1000);
   osc.connect(gain);
   gain.connect(audioCtx.destination);
@@ -74,9 +144,10 @@ const CORRECT_SOURCES = [
 function playCorrectFallback() {
   if (!SOUND_ENABLED) return;
   if (audioCtx.state === "suspended") audioCtx.resume();
-  bellTone(880, 420, 0.22, "sine");
-  bellTone(1320, 360, 0.14, "triangle");
-  bellTone(1760, 300, 0.09, "sine");
+  const volume = getSoundVolume("correct");
+  bellTone(880, 420, 0.22, "sine", volume);
+  bellTone(1320, 360, 0.14, "triangle", volume);
+  bellTone(1760, 300, 0.09, "sine", volume);
 }
 
 function playCorrectFromSource(index = 0) {
@@ -87,7 +158,7 @@ function playCorrectFromSource(index = 0) {
   }
 
   const ding = new Audio(CORRECT_SOURCES[index]);
-  ding.volume = 0.95;
+  ding.volume = getSoundVolume("correct");
   ding.play().catch(() => playCorrectFromSource(index + 1));
 }
 
@@ -99,8 +170,12 @@ const WRONG_SOURCES = [
   "sounds/family feud wrong.mp3"
 ];
 
+const SUDDEN_DEATH_SOURCES = [
+  "sounds/Family Feud - Sudden Death.mp3"
+];
+
 function playWrongFallback() {
-  tone(150, 400);
+  tone(150, 400, getSoundVolume("wrong"));
 }
 
 function playWrongFromSource(index = 0) {
@@ -111,7 +186,7 @@ function playWrongFromSource(index = 0) {
   }
 
   const wrong = new Audio(WRONG_SOURCES[index]);
-  wrong.volume = 0.95;
+  wrong.volume = getSoundVolume("wrong");
   wrong.play().catch(() => playWrongFromSource(index + 1));
 }
 
@@ -119,12 +194,45 @@ function strikeSound() {
   playWrongFromSource(0);
 }
 
+function stopSuddenDeathSound() {
+  if (!activeSuddenDeathAudio) return;
+  try {
+    activeSuddenDeathAudio.pause();
+    activeSuddenDeathAudio.currentTime = 0;
+  } catch (_) {
+    // ignore audio stop errors
+  }
+  activeSuddenDeathAudio = null;
+}
+
+function playSuddenDeathFromSource(index = 0) {
+  if (!SOUND_ENABLED) return;
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  if (index >= SUDDEN_DEATH_SOURCES.length) return;
+
+  stopSuddenDeathSound();
+  const suddenDeath = new Audio(SUDDEN_DEATH_SOURCES[index]);
+  activeSuddenDeathAudio = suddenDeath;
+  suddenDeath.volume = getSoundVolume("suddenDeath");
+  suddenDeath.addEventListener("ended", () => {
+    if (activeSuddenDeathAudio === suddenDeath) activeSuddenDeathAudio = null;
+  }, { once: true });
+  suddenDeath.play().catch(() => {
+    if (activeSuddenDeathAudio === suddenDeath) activeSuddenDeathAudio = null;
+    playSuddenDeathFromSource(index + 1);
+  });
+}
+
+function suddenDeathSound() {
+  playSuddenDeathFromSource(0);
+}
+
 function stealSound() {
   return;
 }
 
 function winSound() {
-  tone(1200, 600);
+  tone(1200, 600, getSoundVolume("win"));
 }
 
 function setStrikesDisplay(value) {
@@ -133,9 +241,9 @@ function setStrikesDisplay(value) {
   if (el) el.innerText = value;
 }
 const DEFAULT_STAGE_ESTIMATION = {
-  1: { question: "Koliko minuta traje jedan skolski cas?", answer: "Tacan broj: 45" },
-  2: { question: "Koliko dana ima godina?", answer: "Tacan broj: 365" },
-  3: { question: "Koliko igraca ima jedan fudbalski tim na terenu?", answer: "Tacan broj: 11" }
+  1: { question: "PITANJE PROCJENE - GAME ONE", answer: "TIM SA NAJBLIZIM ODGOVOROM IMA PREDNOST" },
+  2: { question: "PITANJE PROCJENE - GAME TWO", answer: "TIM SA NAJBLIZIM ODGOVOROM IMA PREDNOST" },
+  3: { question: "PITANJE PROCJENE - FINALE", answer: "TIM SA NAJBLIZIM ODGOVOROM IMA PREDNOST" }
 };
 
 let STAGE_ESTIMATION = JSON.parse(JSON.stringify(DEFAULT_STAGE_ESTIMATION));
@@ -168,16 +276,16 @@ function updateControlVisibility() {
     stageContinueControls.classList.toggle("hidden", !showContinue);
   }
 
-  const overlayContinueBtn = document.getElementById("qaContinueBtn");
-  const promptContinueBtn = document.getElementById("qaPromptContinueBtn");
-  if (overlayContinueBtn) {
-    overlayContinueBtn.textContent = pendingStageStep === "start_stage_intro" ? "NASTAVI" : "ZAVRŠI";
+  const controlProjectionBtn = document.getElementById("controlProjectionBtn");
+  if (controlProjectionBtn) {
+    controlProjectionBtn.classList.add("hidden");
   }
-  if (promptContinueBtn) {
-    promptContinueBtn.textContent = "NASTAVI";
+
+  const controlSettingsBtn = document.getElementById("controlSettingsBtn");
+  if (controlSettingsBtn) {
+    controlSettingsBtn.classList.add("hidden");
   }
 }
-
 function updateRevealButtons(round) {
   for (let i = 0; i < 8; i++) {
     const btn = document.getElementById(`revealBtn${i}`);
@@ -216,6 +324,7 @@ function renderEstimationRound() {
 }
 
 function startStageEstimation() {
+  suddenDeathSound();
   estimationMode = true;
   estimationRevealed = false;
   strikes = 0;
@@ -228,13 +337,12 @@ function startStageEstimation() {
 
 function chooseAdvantageTeam(teamIndex) {
   if (IS_PROJECTION || !estimationMode || transitionInProgress || pendingStageContinue) return;
+  stopSuddenDeathSound();
   currentTeam = teamIndex === 1 ? 1 : 0;
-  roundStarterTeam = currentTeam;
   estimationMode = false;
   estimationRevealed = false;
   updateTopBar();
   updateControlVisibility();
-
 
   const roundNo = roundIndex + 1;
   triggerProjectionAnimation(roundNo);
@@ -314,7 +422,6 @@ function getStateSnapshot() {
     finalTeams,
     activeTeams,
     currentTeam,
-    roundStarterTeam,
     strikes,
     strikeLabel,
     revealed,
@@ -364,9 +471,6 @@ function triggerProjectionStageWinner(message, imageSrc = "pictures/druga.png", 
 
 function applyProjectionState(state) {
   if (!state) return;
-  if (typeof window.isStageContinuePromptActive === "function" && window.isStageContinuePromptActive()) {
-    return;
-  }
   if (typeof window.isWinnerHoldOverlayActive === "function" && window.isWinnerHoldOverlayActive()) {
     if (typeof window.dismissStageWinnerOverlay === "function") {
       window.dismissStageWinnerOverlay();
@@ -379,7 +483,6 @@ function applyProjectionState(state) {
   finalTeams = state.finalTeams;
   activeTeams = state.activeTeams;
   currentTeam = state.currentTeam;
-  roundStarterTeam = Number.isInteger(state.roundStarterTeam) ? state.roundStarterTeam : 0;
   strikes = state.strikes;
   strikeLabel = state.strikeLabel || "";
   revealed = state.revealed || [];
@@ -426,20 +529,11 @@ function setupSync() {
     const transitionMode = payload && payload.transitionMode ? payload.transitionMode : "";
     const holdActive = (typeof window.isWinnerHoldOverlayActive === "function") && window.isWinnerHoldOverlayActive();
 
-    if (transitionMode === "prompt") {
-      if (typeof window.showStageContinuePrompt === "function") {
-        window.showStageContinuePrompt();
-      }
-      return;
-    }
-
     if (!showMessage && isWinnerImage && typeof window.runSpecialImageTransition === "function") {
       if (transitionMode === "resume") {
         window.runSpecialImageTransition(imageSrc, function () {}, { continueFromHold: true });
       } else if (transitionMode === "hold") {
         window.runSpecialImageTransition(imageSrc, null, { holdAtCenter: true });
-      } else if (transitionMode === "auto") {
-        window.runSpecialImageTransition(imageSrc, function () {});
       } else {
         window.runSpecialImageTransition(
           imageSrc,
@@ -556,7 +650,6 @@ function loadRound(showTransition = true) {
   estimationRevealed = false;
   updateControlVisibility();
   const round = getQuestionsForStage()[roundIndex];
-  currentTeam = roundStarterTeam;
   revealed = [];
   strikes = 0;
   roundPoints = 0;
@@ -614,7 +707,6 @@ function revealAnswer(i) {
 
   roundPoints += round.answers[i].points * round.multiplier;
   updateRoundTotal();
-  updateRevealButtons(round);
   correctSound();
   publishState();
 }
@@ -664,8 +756,6 @@ function nextRound() {
     return;
   }
 
-  roundStarterTeam = roundStarterTeam === 0 ? 1 : 0;
-
   const roundNo = roundIndex + 1;
   triggerProjectionAnimation(roundNo);
 
@@ -694,14 +784,12 @@ function endMatch() {
     const winnerImage = getWinnerImageForTeam(winner);
     const continueNextStage = function () {
       currentTeam = 0;
-      roundStarterTeam = 0;
       startStageEstimation();
     };
 
     pendingStageContinue = continueNextStage;
-    pendingStageImage = "pictures/druga.png";
+    pendingStageImage = null;
     pendingWinnerImage = winnerImage;
-    pendingStageStep = "finish_winner";
     updateControlVisibility();
 
     triggerProjectionStageWinner("", winnerImage, false, "hold");
@@ -712,22 +800,20 @@ function endMatch() {
   } else if (stage === 2) {
     finalTeams.push(winner);
     activeTeams = [finalTeams[0], finalTeams[1]];
-    stage = 3;
-    roundIndex = 0;
     teams[activeTeams[0]].score = 0;
     teams[activeTeams[1]].score = 0;
+    stage = 3;
+    roundIndex = 0;
 
     const winnerImage = getWinnerImageForTeam(winner);
     const continueNextStage = function () {
       currentTeam = 0;
-      roundStarterTeam = 0;
       startStageEstimation();
     };
 
     pendingStageContinue = continueNextStage;
-    pendingStageImage = "pictures/finale.png";
+    pendingStageImage = null;
     pendingWinnerImage = winnerImage;
-    pendingStageStep = "finish_winner";
     updateControlVisibility();
 
     triggerProjectionStageWinner("", winnerImage, false, "hold");
@@ -737,7 +823,7 @@ function endMatch() {
     return;
   } else {
     const winnerImage = getWinnerImageForTeam(winner);
-    triggerProjectionStageWinner("", winnerImage, false, "hold");
+    triggerProjectionStageWinner("", winnerImage, false);
     if (typeof window.runSpecialImageTransition === "function") {
       window.runSpecialImageTransition(winnerImage, function () {
         showWinnerScreen(winner);
@@ -745,15 +831,18 @@ function endMatch() {
       return;
     }
     showWinnerScreen(winner);
+    publishState();
     return;
   }
 }
 
 // WINNER
 function showWinnerScreen(winnerIndex) {
+  winSound();
   document.body.innerHTML = `
-  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;">
-  <button onclick="location.reload()" style="padding:20px;font-size:25px;">Završi</button>
+  <div style="text-align:center;margin-top:200px;">
+  <h1 style="font-size:60px;color:gold;">POBJEDNIK JE TIM ${teams[winnerIndex].name}</h1>
+  <button onclick="location.reload()" style="padding:20px;font-size:25px;">Igraj ponovo</button>
   </div>`;
 }
 
@@ -773,58 +862,37 @@ function continueToNextStage() {
   const proceed = pendingStageContinue;
   const winnerImage = pendingWinnerImage;
   const imageSrc = pendingStageImage;
-
-  if (pendingStageStep === "finish_winner" && winnerImage) {
-    pendingStageStep = "start_stage_intro";
-    updateControlVisibility();
-    triggerProjectionStageWinner("", "", false, "prompt");
-    triggerProjectionStageWinner("", winnerImage, false, "resume");
-    if (typeof window.runSpecialImageTransition === "function") {
-      window.runSpecialImageTransition(winnerImage, function () {
-        if (typeof window.showStageContinuePrompt === "function") {
-          window.showStageContinuePrompt();
-        }
-      }, { continueFromHold: true });
-      return;
-    }
-    if (typeof window.showStageContinuePrompt === "function") {
-      window.showStageContinuePrompt();
-    }
-    return;
-  }
-
   pendingStageContinue = null;
   pendingStageImage = null;
-  roundStarterTeam = 0;
   pendingWinnerImage = null;
-  pendingStageStep = "finish_winner";
   updateControlVisibility();
-
-  const runPendingStageImageThenProceed = function () {
-    if (!imageSrc) {
-      proceed();
-      return;
-    }
-
-    triggerProjectionStageWinner("", imageSrc, false, "auto");
+  if (winnerImage) {
+    triggerProjectionStageWinner("", winnerImage, false, "resume");
     if (typeof window.runSpecialImageTransition === "function") {
-      window.runSpecialImageTransition(imageSrc, proceed);
+      window.runSpecialImageTransition(winnerImage, proceed, { continueFromHold: true });
       return;
     }
-    proceed();
-  };
-
+  }
   if (typeof window.dismissStageWinnerOverlay === "function") {
     window.dismissStageWinnerOverlay();
   }
-  runPendingStageImageThenProceed();
+  const proceedToStage = function () {
+    proceed();
+  };
+
+  if (imageSrc) {
+    triggerProjectionStageWinner("", imageSrc, false);
+    if (typeof window.runSpecialImageTransition === "function") {
+      window.runSpecialImageTransition(imageSrc, proceedToStage);
+      return;
+    }
+  }
+  proceedToStage();
 }
 
 const QUESTIONS_STORAGE_KEY = "family_feud_questions";
 const ESTIMATION_STORAGE_KEY = "family_feud_estimation";
 const PERSISTENCE_KEY = "family_feud_persistent_data_v1";
-const SHARED_DATA_ENDPOINT = "/api/shared-data";
-const GOOGLE_SHEET_EXAMPLE_URL = "https://docs.google.com/spreadsheets/d/1GLyA8ZLjbESjuKqB6EJ7TbCbbq4v59EHUHykUzvrIMs/edit?usp=sharing";
 const STAGE_OPTIONS = [1, 2, 3];
 let editorSelectedStage = 1;
 
@@ -834,8 +902,8 @@ function cloneQuestions(data) {
 
 const DEFAULT_STAGE_QUESTIONS = {
   1: cloneQuestions(GAME_DATA.slice(0, 4)),
-  2: cloneQuestions(GAME_DATA.slice(4, 8)),
-  3: cloneQuestions(GAME_DATA.slice(8, 13))
+  2: cloneQuestions(GAME_DATA.slice(0, 4)),
+  3: cloneQuestions(GAME_DATA.slice(0, 5))
 };
 
 let STAGE_QUESTIONS = cloneQuestions(DEFAULT_STAGE_QUESTIONS);
@@ -947,595 +1015,6 @@ function hydrateQuestionsFromStorage() {
   }
 
   savePersistentData();
-}
-
-function applyPersistencePayload(payload) {
-  if (!payload || typeof payload !== "object") return false;
-
-  let applied = false;
-  const storedQuestions = payload.stageQuestions;
-  const storedEstimation = payload.stageEstimation;
-
-  if (storedQuestions && typeof storedQuestions === "object") {
-    STAGE_OPTIONS.forEach((targetStage) => {
-      const data = storedQuestions[targetStage];
-      if (validateQuestionsData(data)) {
-        setQuestionsForStage(targetStage, data);
-        localStorage.setItem(getQuestionStorageKey(targetStage), JSON.stringify(data));
-        applied = true;
-      }
-    });
-  }
-
-  if (storedEstimation && typeof storedEstimation === "object") {
-    STAGE_OPTIONS.forEach((targetStage) => {
-      const prompt = storedEstimation[targetStage];
-      if (validateEstimationPrompt(prompt)) {
-        setEstimationPromptForStage(targetStage, prompt);
-        localStorage.setItem(getEstimationStorageKey(targetStage), JSON.stringify(prompt));
-        applied = true;
-      }
-    });
-  }
-
-  if (applied) savePersistentData();
-  return applied;
-}
-
-async function hydrateQuestionsFromSharedStore() {
-  try {
-    const response = await fetch(SHARED_DATA_ENDPOINT, { cache: "no-store" });
-    if (!response.ok) return false;
-
-    const payload = await response.json();
-    return applyPersistencePayload(payload);
-  } catch (_) {
-    return false;
-  }
-}
-
-async function saveSharedData() {
-  try {
-    await fetch(SHARED_DATA_ENDPOINT, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildPersistencePayload())
-    });
-  } catch (_) {
-    // Shared sync is optional; local save still remains available.
-  }
-}
-
-function normalizeGoogleSheetCsvUrl(rawUrl) {
-  const trimmed = String(rawUrl || "").trim();
-  if (!trimmed) return "";
-
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(trimmed);
-  } catch (_) {
-    return "";
-  }
-
-  if (parsedUrl.hostname.includes("docs.google.com") && parsedUrl.pathname.includes("/spreadsheets/d/")) {
-    if (parsedUrl.searchParams.get("output") === "csv" || parsedUrl.pathname.includes("/export")) {
-      return parsedUrl.toString();
-    }
-
-    const match = parsedUrl.pathname.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-    if (!match || !match[1]) return "";
-    const sheetId = match[1];
-    const gid = parsedUrl.searchParams.get("gid") || "0";
-    return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${encodeURIComponent(gid)}`;
-  }
-
-  return parsedUrl.toString();
-}
-
-function parseCsvText(csvText) {
-  const text = String(csvText || "");
-  const rows = [];
-  let row = [];
-  let cell = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    const next = text[i + 1];
-
-    if (inQuotes) {
-      if (ch === '"' && next === '"') {
-        cell += '"';
-        i++;
-      } else if (ch === '"') {
-        inQuotes = false;
-      } else {
-        cell += ch;
-      }
-      continue;
-    }
-
-    if (ch === '"') {
-      inQuotes = true;
-      continue;
-    }
-    if (ch === ",") {
-      row.push(cell.trim());
-      cell = "";
-      continue;
-    }
-    if (ch === "\n") {
-      row.push(cell.trim());
-      rows.push(row);
-      row = [];
-      cell = "";
-      continue;
-    }
-    if (ch === "\r") continue;
-    cell += ch;
-  }
-
-  if (cell.length > 0 || row.length > 0) {
-    row.push(cell.trim());
-    rows.push(row);
-  }
-
-  return rows;
-}
-
-function normalizeHeaderValue(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function getHeaderIndex(headers, aliases) {
-  for (let i = 0; i < headers.length; i++) {
-    if (aliases.includes(headers[i])) return i;
-  }
-  return -1;
-}
-
-function getCellValue(row, index) {
-  if (!Array.isArray(row) || index < 0 || index >= row.length) return "";
-  return String(row[index] || "").trim();
-}
-
-function isQuestionHeader(value) {
-  return ["question", "pitanje", "pitanja"].includes(value);
-}
-
-function isAnswerHeader(value) {
-  return ["answer", "odgovor", "odgovori"].includes(value);
-}
-
-function isPointsHeader(value) {
-  return ["points", "poeni", "score", "bodovi", "bodovi%"].includes(value);
-}
-
-function resolveHeaderRowIndex(rows) {
-  for (let r = 0; r < rows.length; r++) {
-    const headerRow = (rows[r] || []).map(normalizeHeaderValue);
-    const questionCount = headerRow.filter((value) => isQuestionHeader(value)).length;
-    const hasAnswer = headerRow.some((value) => isAnswerHeader(value));
-    if (questionCount > 1 || (questionCount >= 1 && hasAnswer)) return r;
-  }
-  return 0;
-}
-
-function resolveStageFromLabel(rawLabel) {
-  const label = normalizeHeaderValue(rawLabel);
-  if (!label) return null;
-  if (label.includes("prva") || label.includes("game one") || label.includes("igra 1")) return 1;
-  if (label.includes("druga") || label.includes("game two") || label.includes("igra 2")) return 2;
-  if (label.includes("finale") || label.includes("final")) return 3;
-  if (label === "1") return 1;
-  if (label === "2") return 2;
-  if (label === "3") return 3;
-  return null;
-}
-
-function normalizeAnswersWithPoints(answerTexts, pointCandidates) {
-  const limitedAnswers = answerTexts.slice(0, 8);
-  const limitedPoints = pointCandidates.slice(0, limitedAnswers.length);
-  const validPointsCount = limitedPoints.filter((value) => Number.isFinite(value) && value >= 0).length;
-
-  let finalPoints;
-  if (validPointsCount === limitedAnswers.length && validPointsCount > 0) {
-    finalPoints = limitedPoints.map((value) => Math.round(value));
-  } else {
-    finalPoints = generateLogicalAutoPoints(limitedAnswers.length);
-  }
-
-  return limitedAnswers.map((text, index) => ({
-    text,
-    points: finalPoints[index]
-  }));
-}
-
-function parseOptionalPoints(rawValue) {
-  const raw = String(rawValue || "").trim().replace(",", ".");
-  if (!raw) return null;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return parsed;
-}
-
-function parseMultiStageColumnLayout(rows, headerRowIndex) {
-  const headerRow = (rows[headerRowIndex] || []).map(normalizeHeaderValue);
-  const stageLabelRow = headerRowIndex > 0 ? (rows[headerRowIndex - 1] || []) : [];
-  const dataStartRow = headerRowIndex + 1;
-
-  const columnBlocks = [];
-  for (let col = 0; col < headerRow.length; col++) {
-    if (!isQuestionHeader(headerRow[col])) continue;
-    const answerCol = isAnswerHeader(headerRow[col + 1]) ? col + 1 : -1;
-    const pointsCol = isPointsHeader(headerRow[col + 2]) ? col + 2 : -1;
-    const stageNumber = resolveStageFromLabel(getCellValue(stageLabelRow, col));
-    columnBlocks.push({
-      questionCol: col,
-      answerCol,
-      pointsCol,
-      stageNumber
-    });
-  }
-
-  if (columnBlocks.length < 2) return null;
-
-  const freeStages = [1, 2, 3];
-  columnBlocks.forEach((block, index) => {
-    if (block.stageNumber && freeStages.includes(block.stageNumber)) {
-      freeStages.splice(freeStages.indexOf(block.stageNumber), 1);
-      return;
-    }
-    block.stageNumber = freeStages.length > 0 ? freeStages.shift() : ((index % 3) + 1);
-  });
-
-  const questionsByStage = { 1: [], 2: [], 3: [] };
-
-  columnBlocks.forEach((block) => {
-    let currentQuestion = "";
-    let currentAnswers = [];
-    let currentPoints = [];
-
-    const flushCurrent = () => {
-      if (!currentQuestion) return;
-      if (currentAnswers.length === 0) return;
-      questionsByStage[block.stageNumber].push({
-        question: currentQuestion,
-        multiplier: 1,
-        answers: normalizeAnswersWithPoints(currentAnswers, currentPoints)
-      });
-    };
-
-    for (let r = dataStartRow; r < rows.length; r++) {
-      const row = rows[r] || [];
-      const questionValue = getCellValue(row, block.questionCol);
-      const answerValue = block.answerCol >= 0 ? getCellValue(row, block.answerCol) : "";
-      const pointsValueRaw = block.pointsCol >= 0 ? getCellValue(row, block.pointsCol) : "";
-      const parsedPoints = parseOptionalPoints(pointsValueRaw);
-
-      if (questionValue) {
-        flushCurrent();
-        currentQuestion = questionValue;
-        currentAnswers = [];
-        currentPoints = [];
-      }
-
-      if (!currentQuestion) continue;
-      if (answerValue) {
-        currentAnswers.push(answerValue);
-        currentPoints.push(parsedPoints);
-      }
-    }
-
-    flushCurrent();
-  });
-
-  const hasAnyQuestion = STAGE_OPTIONS.some((targetStage) => questionsByStage[targetStage].length > 0);
-  if (!hasAnyQuestion) return null;
-
-  return questionsByStage;
-}
-
-function generateLogicalAutoPoints(answerCount) {
-  const count = Math.max(0, Number(answerCount) || 0);
-  if (count === 0) return [];
-  if (count === 1) return [100];
-
-  const weights = [];
-  let current = 1 + Math.random() * 0.45;
-
-  for (let i = 0; i < count; i++) {
-    if (i > 0) {
-      const drop = 0.08 + Math.random() * 0.2;
-      current = Math.max(0.06, current - drop);
-    }
-    weights.push(current);
-  }
-
-  const totalWeight = weights.reduce((sum, w) => sum + w, 0);
-  let points = weights.map((w) => Math.max(1, Math.round((w / totalWeight) * 100)));
-
-  for (let i = 1; i < points.length; i++) {
-    if (points[i] > points[i - 1]) points[i] = points[i - 1];
-    if (points[i] < 1) points[i] = 1;
-  }
-
-  let diff = 100 - points.reduce((sum, p) => sum + p, 0);
-  if (diff > 0) {
-    points[0] += diff;
-  } else if (diff < 0) {
-    diff = Math.abs(diff);
-    for (let i = points.length - 1; i >= 0 && diff > 0; i--) {
-      const removable = Math.max(0, points[i] - 1);
-      if (removable === 0) continue;
-      const take = Math.min(removable, diff);
-      points[i] -= take;
-      diff -= take;
-    }
-  }
-
-  for (let i = 1; i < points.length; i++) {
-    if (points[i] > points[i - 1]) points[i] = points[i - 1];
-  }
-
-  return points;
-}
-
-function parseImportedSheetData(rows, fallbackEstimationPrompt) {
-  if (!Array.isArray(rows) || rows.length < 2) {
-    throw new Error("Google Sheet nema dovoljno podataka za uvoz.");
-  }
-
-  const headerRowIndex = resolveHeaderRowIndex(rows);
-  const dataStartRow = headerRowIndex + 1;
-  const headers = (rows[headerRowIndex] || []).map(normalizeHeaderValue);
-  const stageQuestions = parseMultiStageColumnLayout(rows, headerRowIndex);
-
-  if (stageQuestions) {
-    const estimationByStage = {};
-    STAGE_OPTIONS.forEach((targetStage) => {
-      estimationByStage[targetStage] = getEstimationPrompt(targetStage);
-      if (stageQuestions[targetStage] && !validateQuestionsData(stageQuestions[targetStage])) {
-        throw new Error(`Neispravan format pitanja za igru ${targetStage}.`);
-      }
-    });
-
-    return {
-      questionsByStage: stageQuestions,
-      estimationByStage
-    };
-  }
-
-  const questionIdx = getHeaderIndex(headers, ["question", "pitanje", "pitanja"]);
-  const answerIdx = getHeaderIndex(headers, ["answer", "odgovor", "odgovori"]);
-  const pointsIdx = getHeaderIndex(headers, ["points", "poeni", "score", "broj"]);
-  const typeIdx = getHeaderIndex(headers, ["type", "tip"]);
-  const roundIdx = getHeaderIndex(headers, ["round", "runda", "pitanje_broj", "broj_pitanja"]);
-  const orderIdx = getHeaderIndex(headers, ["order", "redoslijed", "redosled", "sort"]);
-
-  if (questionIdx === -1) throw new Error("CSV mora imati kolonu question/pitanje.");
-
-  let estimationPrompt = (fallbackEstimationPrompt && validateEstimationPrompt(fallbackEstimationPrompt))
-    ? { question: fallbackEstimationPrompt.question, answer: fallbackEstimationPrompt.answer }
-    : null;
-
-  const isWideFormat = answerIdx === -1 || pointsIdx === -1;
-  if (isWideFormat) {
-    const reserved = new Set([questionIdx, typeIdx, roundIdx, orderIdx].filter((idx) => idx >= 0));
-    const answerColumnIndexes = [];
-    for (let col = 0; col < headers.length; col++) {
-      if (!reserved.has(col)) answerColumnIndexes.push(col);
-    }
-
-    if (answerColumnIndexes.length === 0) {
-      throw new Error("Nema kolona sa odgovorima. Dodaj kolone desno od pitanja.");
-    }
-
-    const parsedQuestions = [];
-    for (let i = dataStartRow; i < rows.length; i++) {
-      const row = rows[i];
-      if (!Array.isArray(row)) continue;
-
-      const typeRaw = getCellValue(row, typeIdx).toLowerCase();
-      const question = getCellValue(row, questionIdx);
-      if (!question && answerColumnIndexes.every((idx) => !getCellValue(row, idx)) && !typeRaw) continue;
-
-      const isEstimation = ["estimation", "estimate", "procjena", "procena"].includes(typeRaw);
-      const answersRaw = answerColumnIndexes
-        .map((idx) => getCellValue(row, idx))
-        .filter((value) => value.length > 0);
-
-      if (isEstimation) {
-        const estimationAnswer = answersRaw[0] || "";
-        if (!question || !estimationAnswer) {
-          throw new Error(`Red ${i + 1}: procjena mora imati pitanje i prvi odgovor.`);
-        }
-        estimationPrompt = { question, answer: estimationAnswer };
-        continue;
-      }
-
-      if (!question) throw new Error(`Red ${i + 1}: nedostaje pitanje.`);
-      if (answersRaw.length === 0) {
-        throw new Error(`Red ${i + 1}: pitanje mora imati barem jedan odgovor.`);
-      }
-
-      const limitedAnswers = answersRaw.slice(0, 8);
-      const autoPoints = generateLogicalAutoPoints(limitedAnswers.length);
-      parsedQuestions.push({
-        question,
-        multiplier: 1,
-        answers: limitedAnswers.map((text, idx) => ({ text, points: autoPoints[idx] }))
-      });
-    }
-
-    if (!validateQuestionsData(parsedQuestions)) {
-      throw new Error("Uvezeni podaci nisu validni.");
-    }
-
-    return {
-      questions: parsedQuestions,
-      estimation: (estimationPrompt && validateEstimationPrompt(estimationPrompt))
-        ? estimationPrompt
-        : getEstimationPrompt(editorSelectedStage)
-    };
-  }
-
-  const grouped = new Map();
-  let orderCounter = 0;
-
-  for (let i = dataStartRow; i < rows.length; i++) {
-    const row = rows[i];
-    if (!Array.isArray(row)) continue;
-
-    const typeRaw = getCellValue(row, typeIdx).toLowerCase();
-    const question = getCellValue(row, questionIdx);
-    const answer = getCellValue(row, answerIdx);
-    const pointsRaw = getCellValue(row, pointsIdx);
-    const roundValue = getCellValue(row, roundIdx);
-    const orderValue = getCellValue(row, orderIdx);
-
-    if (!question && !answer && !pointsRaw && !typeRaw) continue;
-
-    const isEstimation = ["estimation", "estimate", "procjena", "procena"].includes(typeRaw);
-    if (isEstimation) {
-      if (!question || !answer) {
-        throw new Error(`Red ${i + 1}: procjena mora imati pitanje i odgovor.`);
-      }
-      estimationPrompt = { question, answer };
-      continue;
-    }
-
-    if (!question) throw new Error(`Red ${i + 1}: nedostaje pitanje.`);
-    if (!answer) throw new Error(`Red ${i + 1}: nedostaje odgovor.`);
-
-    const pointsValue = parseOptionalPoints(pointsRaw);
-    if (pointsValue === null && String(pointsRaw || "").trim() !== "") {
-      throw new Error(`Red ${i + 1}: poeni moraju biti broj 0 ili vece.`);
-    }
-
-    const groupingKey = roundValue ? `round:${roundValue}` : `question:${question.toLowerCase()}`;
-    if (!grouped.has(groupingKey)) {
-      const parsedOrder = Number(orderValue);
-      grouped.set(groupingKey, {
-        question,
-        multiplier: 1,
-        answers: [],
-        sortOrder: Number.isFinite(parsedOrder) ? parsedOrder : orderCounter++
-      });
-    }
-
-    const entry = grouped.get(groupingKey);
-    if (!entry.question && question) entry.question = question;
-    entry.answers.push({ text: answer, points: pointsValue });
-  }
-
-  const parsedQuestions = Array.from(grouped.values())
-    .sort((a, b) => a.sortOrder - b.sortOrder)
-    .map((item) => ({
-      question: item.question,
-      multiplier: item.multiplier,
-      answers: normalizeAnswersWithPoints(
-        item.answers.slice(0, 8).map((ans) => ans.text),
-        item.answers.slice(0, 8).map((ans) => ans.points)
-      )
-    }));
-
-  if (!validateQuestionsData(parsedQuestions)) {
-    throw new Error("Uvezeni podaci nisu validni. Provjeri da svako pitanje ima bar jedan odgovor.");
-  }
-
-  return {
-    questions: parsedQuestions,
-    estimation: (estimationPrompt && validateEstimationPrompt(estimationPrompt))
-      ? estimationPrompt
-      : getEstimationPrompt(editorSelectedStage)
-  };
-}
-
-async function importQuestionsFromGoogleSheet() {
-  if (IS_PROJECTION || transitionInProgress || pendingStageContinue) return;
-
-  const input = document.getElementById("questionImportUrl");
-  const importButton = document.querySelector(".editor-import-row button");
-  if (!input) return;
-
-  const csvUrl = normalizeGoogleSheetCsvUrl(input.value);
-  if (!csvUrl) {
-    alert("Unesi ispravan Google Sheet link.");
-    return;
-  }
-
-  try {
-    if (importButton) importButton.disabled = true;
-
-    const response = await fetch(csvUrl, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error("Ne mogu preuzeti Google Sheet. Provjeri da je fajl javno dostupan.");
-    }
-
-    const csvText = await response.text();
-    const rows = parseCsvText(csvText);
-    const parsed = parseImportedSheetData(rows, getEstimationPrompt(editorSelectedStage));
-
-    if (parsed && parsed.questionsByStage) {
-      STAGE_OPTIONS.forEach((targetStage) => {
-        const importedQuestions = parsed.questionsByStage[targetStage];
-        if (validateQuestionsData(importedQuestions)) {
-          setQuestionsForStage(targetStage, importedQuestions);
-          localStorage.setItem(getQuestionStorageKey(targetStage), JSON.stringify(importedQuestions));
-        }
-
-        const importedEstimation = parsed.estimationByStage && parsed.estimationByStage[targetStage];
-        if (validateEstimationPrompt(importedEstimation)) {
-          setEstimationPromptForStage(targetStage, importedEstimation);
-          localStorage.setItem(getEstimationStorageKey(targetStage), JSON.stringify(importedEstimation));
-        }
-      });
-    } else {
-      setEstimationPromptForStage(editorSelectedStage, parsed.estimation);
-      localStorage.setItem(getEstimationStorageKey(editorSelectedStage), JSON.stringify(parsed.estimation));
-
-      setQuestionsForStage(editorSelectedStage, parsed.questions);
-      localStorage.setItem(getQuestionStorageKey(editorSelectedStage), JSON.stringify(parsed.questions));
-    }
-
-    savePersistentData();
-    saveSharedData();
-    renderQuestionEditorForm(editorSelectedStage);
-
-    if (editorSelectedStage === stage) {
-      roundIndex = 0;
-      strikes = 0;
-      roundPoints = 0;
-      stealMode = false;
-      revealed = [];
-
-      if (estimationMode) {
-        estimationRevealed = false;
-        renderEstimationRound();
-        publishState();
-      } else {
-        loadRound(false);
-      }
-    }
-
-    if (parsed && parsed.questionsByStage) {
-      alert("Pitanja su uspjesno uvezena i rasporedjena po igrama (Prva/Druga/Finale).");
-    } else {
-      alert("Pitanja su uspjesno uvezena iz Google Sheet-a.");
-    }
-  } catch (err) {
-    alert(err && err.message ? err.message : "Neuspjesan uvoz pitanja.");
-  } finally {
-    if (importButton) importButton.disabled = false;
-  }
-}
-
-function useExampleGoogleSheetLink() {
-  const input = document.getElementById("questionImportUrl");
-  if (!input) return;
-  input.value = GOOGLE_SHEET_EXAMPLE_URL;
-  input.focus();
 }
 
 function renderQuestionEditorForm(targetStage) {
@@ -1684,6 +1163,22 @@ function onQuestionEditorStageChange(value) {
   renderQuestionEditorForm(editorSelectedStage);
 }
 
+function openSettingsModal() {
+  if (IS_PROJECTION || transitionInProgress || pendingStageContinue) return;
+  const modal = document.getElementById("settingsModal");
+  if (!modal) return;
+  syncSoundSettingsUI();
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+}
+
+function closeSettingsModal() {
+  const modal = document.getElementById("settingsModal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+}
+
 function openQuestionEditor() {
   if (IS_PROJECTION || transitionInProgress || pendingStageContinue) return;
   const modal = document.getElementById("questionEditorModal");
@@ -1695,6 +1190,11 @@ function openQuestionEditor() {
   renderQuestionEditorForm(editorSelectedStage);
   modal.classList.remove("hidden");
   modal.setAttribute("aria-hidden", "false");
+}
+
+function openQuestionEditorFromSettings() {
+  closeSettingsModal();
+  openQuestionEditor();
 }
 
 function closeQuestionEditor() {
@@ -1726,7 +1226,6 @@ function saveQuestionEditor() {
     setQuestionsForStage(editorSelectedStage, parsed);
     localStorage.setItem(getQuestionStorageKey(editorSelectedStage), JSON.stringify(parsed));
     savePersistentData();
-    saveSharedData();
 
     if (editorSelectedStage === stage) {
       roundIndex = 0;
@@ -1755,22 +1254,24 @@ function saveQuestionEditor() {
 function startGameFromIntro() {
   pendingStageContinue = null;
   pendingStageImage = null;
-  roundStarterTeam = 0;
   pendingWinnerImage = null;
-  pendingStageStep = "finish_winner";
   gameStarted = true;
   const start = document.getElementById("startScreen");
   const root = document.getElementById("gameRoot");
   if (start) start.classList.add("hidden");
   if (root) root.classList.remove("hidden");
 
+  const beginFirstStage = function () {
+    startStageEstimation();
+  };
+
   triggerProjectionStageWinner("", "pictures/prva.png", false);
   if (typeof window.runStageWinnerTransition === "function") {
-    window.runStageWinnerTransition("", startStageEstimation, "pictures/prva.png", false);
+    window.runStageWinnerTransition("", beginFirstStage, "pictures/prva.png", false);
   } else if (typeof window.runSpecialImageTransition === "function") {
-    window.runSpecialImageTransition("pictures/prva.png", startStageEstimation);
+    window.runSpecialImageTransition("pictures/prva.png", beginFirstStage);
   } else {
-    startStageEstimation();
+    beginFirstStage();
   }
 }
 
@@ -1798,17 +1299,22 @@ window.toggleControlMenu = toggleControlMenu;
 window.goToStartScreen = goToStartScreen;
 window.startGameFromIntro = startGameFromIntro;
 window.openProjection = openProjection;
+window.updateSoundVolume = setSoundVolume;
+window.openSettingsModal = openSettingsModal;
+window.closeSettingsModal = closeSettingsModal;
 window.openQuestionEditor = openQuestionEditor;
+window.openQuestionEditorFromSettings = openQuestionEditorFromSettings;
 window.closeQuestionEditor = closeQuestionEditor;
 window.saveQuestionEditor = saveQuestionEditor;
-window.importQuestionsFromGoogleSheet = importQuestionsFromGoogleSheet;
-window.useExampleGoogleSheetLink = useExampleGoogleSheetLink;
 window.onQuestionEditorStageChange = onQuestionEditorStageChange;
 window.chooseAdvantageTeam = chooseAdvantageTeam;
 window.continueToNextStage = continueToNextStage;
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeQuestionEditor();
+  if (e.key === "Escape") {
+    closeQuestionEditor();
+    closeSettingsModal();
+  }
 });
 
 if (IS_PROJECTION) {
@@ -1819,19 +1325,28 @@ if (IS_PROJECTION) {
   if (root) root.classList.add("hidden");
 }
 
-async function initializeApp() {
-  hydrateQuestionsFromStorage();
-  await hydrateQuestionsFromSharedStore();
-  setupSync();
-  updateControlVisibility();
-  if (!IS_PROJECTION) publishState();
-}
-
-initializeApp();
+hydrateQuestionsFromStorage();
+setupSync();
+updateControlVisibility();
+if (!IS_PROJECTION) publishState();
 
 if (IS_PROJECTION) {
   // Projection waits for synced state; if none arrives, keep empty board.
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
